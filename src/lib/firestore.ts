@@ -1,9 +1,12 @@
+// ⚠️ DEPRECATED: This file is no longer used
+// Use src/lib/supabase-db.ts instead for all database operations
+// This file is kept for reference only during migration period
+
 import { db } from "./firebase";
 import {
   doc,
   setDoc,
   addDoc,
-  getDoc,
   getDocs,
   collection,
   serverTimestamp,
@@ -12,29 +15,45 @@ import {
   deleteDoc
 } from "firebase/firestore";
 
-// حفظ المستخدم (يُستدعى أول مرة عند تسجيل الدخول)
+// حفظ المستخدم أول مرة
+// حفظ المستخدم أول مرة + دعم الـ Role
 export async function saveUser(user: any) {
   if (!user?.uid) return;
+
   const userRef = doc(db, "users", user.uid);
-  await setDoc(
-    userRef,
-    {
+
+  // نقرأ بيانات المستخدم الحالية
+  const existing = await getDoc(userRef);
+
+  // إذا لا يوجد مستخدم → أنشئه مع حقل role
+  if (!existing.exists()) {
+    await setDoc(userRef, {
       email: user.email || "",
       name: user.displayName || "مستخدم جديد",
+      role: "student",  // ← كل المستخدمين الجدد طلاب
       lastLogin: serverTimestamp(),
-    },
-    { merge: true }
-  );
+    });
+  }
+
+  // إذا موجود → حدّث وقت تسجيل الدخول فقط
+  else {
+    await setDoc(
+      userRef,
+      {
+        lastLogin: serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
 }
+
 
 // إنشاء محادثة جديدة
 export async function createChat(userId: string, firstMessage?: string) {
   const chatsRef = collection(db, "users", userId, "chats");
 
   const hasMessage = Boolean(firstMessage?.trim());
-  const safeTitle = hasMessage
-    ? firstMessage!.substring(0, 50)
-    : "New chat";
+  const safeTitle = hasMessage ? firstMessage!.substring(0, 50) : "New chat";
   const preview = hasMessage ? firstMessage!.substring(0, 80) : "";
 
   const chatDoc = await addDoc(chatsRef, {
@@ -44,6 +63,7 @@ export async function createChat(userId: string, firstMessage?: string) {
     lastMessageAt: serverTimestamp(),
     lastMessagePreview: preview,
   });
+
   return chatDoc.id;
 }
 
@@ -51,57 +71,90 @@ export type ChatMessagePayload = {
   role: "user" | "assistant";
   content: string;
   imageDataUri?: string | null;
+
+  fileUrl?: string | null;  // ملف من Supabase
+  fileName?: string | null; // اسم الملف
+
   source?: string;
   sourceBookName?: string;
+  sourcePageNumber?: number;
   lang?: "ar" | "en";
 };
 
-// حفظ رسالة داخل محادثة
-export async function saveMessage(userId: string, chatId: string, message: ChatMessagePayload) {
-  const messagesRef = collection(db, "users", userId, "chats", chatId, "messages");
-  await addDoc(messagesRef, {
+// ✅ حفظ رسالة داخل المحادثة - مع إرجاع الـ ID
+export async function saveMessage(
+  userId: string,
+  chatId: string,
+  message: ChatMessagePayload
+) {
+  const messagesRef = collection(
+    db,
+    "users",
+    userId,
+    "chats",
+    chatId,
+    "messages"
+  );
+
+  // ✅ احفظ الـ ref في متغير
+  const messageRef = await addDoc(messagesRef, {
     role: message.role,
     content: message.content,
-    ...(message.imageDataUri ? { imageDataUri: message.imageDataUri } : {}),
-    ...(message.source ? { source: message.source } : {}),
-    ...(message.sourceBookName ? { sourceBookName: message.sourceBookName } : {}),
-    ...(message.lang ? { lang: message.lang } : {}),
+
+    ...(message.imageDataUri && { imageDataUri: message.imageDataUri }),
+
+    ...(message.fileUrl && { fileUrl: message.fileUrl }),
+    ...(message.fileName && { fileName: message.fileName }),
+
+    ...(message.source && { source: message.source }),
+    ...(message.sourceBookName && { sourceBookName: message.sourceBookName }),
+    ...(message.sourcePageNumber && { sourcePageNumber: message.sourcePageNumber }),
+    ...(message.lang && { lang: message.lang }),
+
     createdAt: serverTimestamp(),
   });
 
+  // تحديث بيانات المحادثة
   const chatRef = doc(db, "users", userId, "chats", chatId);
-  const chatUpdate: Record<string, any> = {
+
+  const update: Record<string, any> = {
     updatedAt: serverTimestamp(),
     lastMessageAt: serverTimestamp(),
   };
 
   if (message.content) {
-    chatUpdate.lastMessagePreview = message.content.substring(0, 80);
+    update.lastMessagePreview = message.content.substring(0, 80);
   }
 
   if (message.role === "user" && message.content?.trim()) {
-    chatUpdate.title = message.content.substring(0, 50);
+    update.title = message.content.substring(0, 50);
   }
 
-  await setDoc(chatRef, chatUpdate, { merge: true });
+  await setDoc(chatRef, update, { merge: true });
+
+  // ✅ ارجع الـ ref اللي فيه الـ id
+  return messageRef;
 }
 
-// جلب جميع المحادثات للمستخدم
+// جلب جميع المحادثات
 export async function getUserChats(userId: string) {
   const chatsRef = collection(db, "users", userId, "chats");
   const q = query(chatsRef, orderBy("lastMessageAt", "desc"));
+
   const snapshot = await getDocs(q);
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
 // حذف محادثة
 export async function deleteChat(userId: string, chatId: string) {
-  const chatRef = doc(db, "users", userId, "chats", chatId);
-  await deleteDoc(chatRef);
+  await deleteDoc(doc(db, "users", userId, "chats", chatId));
 }
 
-// إعادة تسمية محادثة
+// إعادة التسمية
 export async function renameChat(userId: string, chatId: string, newTitle: string) {
-  const chatRef = doc(db, "users", userId, "chats", chatId);
-  await setDoc(chatRef, { title: newTitle, updatedAt: serverTimestamp() }, { merge: true });
+  await setDoc(
+    doc(db, "users", userId, "chats", chatId),
+    { title: newTitle, updatedAt: serverTimestamp() },
+    { merge: true }
+  );
 }

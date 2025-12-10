@@ -4,15 +4,39 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDeferredValue } from "react";
 import Image from "next/image";
-import { signOut } from "firebase/auth";
-import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
+import { signOut } from "@/lib/supabase-auth";
+import { supabase } from "@/lib/supabase";
 import { useTheme } from "next-themes";
 import { useLanguage } from "@/hooks/use-language";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { createChat, deleteChat, renameChat } from "@/lib/firestore";
-
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useAdmin } from "@/hooks/use-admin";
+import { useAuth } from "@/hooks/use-auth";
+import { BRANCHES } from "@/constants/branches";
+import { BookOpenCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { translations } from "@/lib/translations";
+import {
+  Edit2,
+  LogOut,
+  Menu,
+  Moon,
+  MoreVertical,
+  PanelLeft,
+  Plus,
+  Search,
+  Sun,
+  Trash2,
+  ShieldCheck,
+} from "lucide-react";
+
+// Import separated components (create these files)
+// import { UserProfile } from "./UserProfile";
+// import { ChatList } from "./ChatList";
+// import { RenameDialog } from "./RenameDialog";
+// import { useChats } from "@/hooks/useChats";
+
+// Temporary imports until you create the files
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,24 +52,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/hooks/use-toast";
-import { translations } from "@/lib/translations";
-import {
-  Edit2,
-  Ellipsis,
-  LogOut,
-  Menu,
-  Moon,
-  MoreVertical,
-  PanelLeft,
-  Plus,
-  Search,
-  Settings,
-  Sun,
-  Trash2,
-} from "lucide-react";
-import { auth, db } from "@/lib/firebase";
-import { useAuth } from "@/hooks/use-auth";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 type ChatPreview = {
   id: string;
@@ -58,21 +65,11 @@ const THEME_OPTIONS = [
     value: "light",
     label: "Light",
     icon: <Sun className="h-4 w-4" />,
-    compactIcon: (
-      <span className="flex h-8 w-8 items-center justify-center rounded-full text-base">
-        ☀
-      </span>
-    ),
   },
   {
     value: "dark",
     label: "Dark",
     icon: <Moon className="h-4 w-4" />,
-    compactIcon: (
-      <span className="flex h-8 w-8 items-center justify-center rounded-full text-base">
-        ☾
-      </span>
-    ),
   },
 ] as const;
 
@@ -85,11 +82,6 @@ const LANGUAGE_OPTIONS = [
         EN
       </span>
     ),
-    compactIcon: (
-      <span className="flex h-8 w-8 items-center justify-center rounded-full text-[0.65rem] font-black uppercase">
-        EN
-      </span>
-    ),
   },
   {
     value: "ar",
@@ -99,18 +91,14 @@ const LANGUAGE_OPTIONS = [
         ع
       </span>
     ),
-    compactIcon: (
-      <span className="flex h-8 w-8 items-center justify-center rounded-full text-lg font-black">
-        ع
-      </span>
-    ),
   },
 ] as const;
 
 export default function MainSidebar() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, isLoggedIn } = useAuth();
+  const { user, isLoggedIn, branch, displayName } = useAuth();
+  const { isAdmin } = useAdmin();
   const { lang, setLanguage } = useLanguage();
   const isMobile = useIsMobile();
   const { theme, setTheme } = useTheme();
@@ -119,14 +107,8 @@ export default function MainSidebar() {
 
   // Mobile off-canvas state
   const [mobileOpen, setMobileOpen] = useState(false);
-  const openMobile = () => setMobileOpen(true);
-  const closeMobile = () => setMobileOpen(false);
-
-  // Claude-style collapse
   const [isCollapsed, setIsCollapsed] = useState(false);
-
   const [searchTerm, setSearchTerm] = useState("");
-  const [chats, setChats] = useState<ChatPreview[]>([]);
   const [isCreatingChat, setIsCreatingChat] = useState(false);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [tempTitle, setTempTitle] = useState("");
@@ -135,8 +117,84 @@ export default function MainSidebar() {
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const activeChatId = searchParams.get("chatId");
 
-  const sidebarWidth = isMobile ? 320 : isCollapsed ? 64 : 280;
+  // Chats state (replace with useChats hook later)
+  const [chats, setChats] = useState<ChatPreview[]>([]);
+  const [chatsLoading, setChatsLoading] = useState(false);
 
+  // Fetch chats
+  useEffect(() => {
+    if (!user?.id) {
+      setChats([]);
+      return;
+    }
+
+    const fetchChats = async () => {
+      try {
+        setChatsLoading(true);
+        const { getUserChats } = await import("@/lib/supabase-db");
+        const fetchedChats = await getUserChats(user.id);
+        setChats(
+          fetchedChats.map((chat: any) => ({
+            id: chat.id,
+            title: chat.title || "New chat",
+            lastMessagePreview: chat.last_message_preview,
+          }))
+        );
+      } catch (error) {
+        // console.error("Error fetching chats:", error);
+      } finally {
+        setChatsLoading(false);
+      }
+    };
+
+    fetchChats();
+
+    // Set up real-time subscription
+    const channel = supabase
+      .channel("chats-changes")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "chats",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          fetchChats();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      channel.unsubscribe();
+    };
+  }, [user?.id]);
+
+  const refetchChats = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const { getUserChats } = await import("@/lib/supabase-db");
+      const fetchedChats = await getUserChats(user.id);
+      setChats(
+        fetchedChats.map((chat: any) => ({
+          id: chat.id,
+          title: chat.title || "New chat",
+          lastMessagePreview: chat.last_message_preview,
+        }))
+      );
+    } catch (error) {
+      console.error("Error refetching chats:", error);
+    }
+  }, [user?.id]);
+
+  // Memoized sidebar width
+  const sidebarWidth = useMemo(
+    () => (isMobile ? 320 : isCollapsed ? 64 : 280),
+    [isMobile, isCollapsed]
+  );
+
+  // Update CSS variable for sidebar offset
   useEffect(() => {
     if (typeof document === "undefined") return;
     const root = document.documentElement;
@@ -152,34 +210,55 @@ export default function MainSidebar() {
     };
   }, [isMobile, sidebarWidth]);
 
-  const handleLogoClick = () => {
+  // Memoized handlers
+  const closeMobile = useCallback(() => setMobileOpen(false), []);
+  const openMobile = useCallback(() => setMobileOpen(true), []);
+
+  const handleLogoClick = useCallback(() => {
     if (isCollapsed) {
       setIsCollapsed(false);
     }
-  };
+  }, [isCollapsed]);
 
-  const handleCollapseClick = () => {
+  const handleCollapseClick = useCallback(() => {
     if (isMobile) {
       closeMobile();
       return;
     }
-
     setIsCollapsed(true);
-  };
+  }, [isMobile, closeMobile]);
 
-  const handleOpenSettings = () => {
-    router.push("/settings");
-    closeMobile();
-  };
+  const handleBranchChange = useCallback(
+    async (newBranch: string) => {
+      if (!user?.id) return;
+      try {
+        const { error } = await supabase
+          .from("users")
+          .update({ branch: newBranch })
+          .eq("id", user.id);
 
-  // لو الشاشة مش موبايل، سكّر overlay تبع الموبايل
+        if (error) throw error;
+        window.location.reload();
+      } catch (error) {
+        console.error("Failed to update branch:", error);
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to update branch.",
+        });
+      }
+    },
+    [user?.id, toast]
+  );
+
+  // Close mobile sidebar when switching to desktop
   useEffect(() => {
     if (!isMobile) {
       setMobileOpen(false);
     }
   }, [isMobile]);
 
-  // Body scroll lock لما السايد تفتح على الموبايل
+  // Body scroll lock for mobile sidebar
   useEffect(() => {
     if (mobileOpen) {
       document.body.style.overflow = "hidden";
@@ -191,47 +270,23 @@ export default function MainSidebar() {
     };
   }, [mobileOpen]);
 
-  // Listen to chats من Firestore
-  useEffect(() => {
-    if (!user?.uid) {
-      setChats([]);
-      return;
-    }
-
-    const q = query(
-      collection(db, "users", user.uid, "chats"),
-      orderBy("lastMessageAt", "desc")
-    );
-
-    const unsub = onSnapshot(q, (snap) => {
-      setChats(
-        snap.docs.map((doc) => ({
-          id: doc.id,
-          title: doc.data().title || "New chat",
-          lastMessagePreview: doc.data().lastMessagePreview,
-        }))
-      );
-    });
-
-    return () => unsub();
-  }, [user?.uid]);
-
+  // Filtered chats with deferred search
   const filteredChats = useMemo(() => {
     if (!deferredSearchTerm.trim()) return chats;
     const lower = deferredSearchTerm.toLowerCase();
     return chats.filter((chat) => chat.title.toLowerCase().includes(lower));
   }, [chats, deferredSearchTerm]);
 
-  const handleNewChat = async () => {
-    if (!user?.uid) {
+  const handleNewChat = useCallback(async () => {
+    if (!user?.id) {
       router.push("/login");
       return;
     }
 
     try {
       setIsCreatingChat(true);
-      // لو حابب تنشئ الوثيقة فعلياً هنا
-      const chatId = await createChat(user.uid);
+      const { createChat } = await import("@/lib/supabase-db");
+      const chatId = await createChat(user.id);
       router.push(`/chat?chatId=${chatId}`);
     } catch (error) {
       console.error("Error creating chat:", error);
@@ -244,38 +299,44 @@ export default function MainSidebar() {
       setIsCreatingChat(false);
       closeMobile();
     }
-  };
+  }, [user?.id, router, toast, closeMobile]);
 
   const handleOpenChat = useCallback(
     (id: string) => {
       router.push(`/chat?chatId=${id}`);
       closeMobile();
     },
-    [router]
+    [router, closeMobile]
   );
 
-  const handleDeleteChat = async (chatId: string) => {
-    if (!user?.uid) return;
-    try {
-      await deleteChat(user.uid, chatId);
-      toast({
-        title: "Chat deleted",
-        description: "The conversation has been deleted.",
-      });
-    } catch (error) {
-      console.error("Error deleting chat:", error);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Failed to delete chat.",
-      });
-    }
-  };
+  const handleDeleteChat = useCallback(
+    async (chatId: string) => {
+      if (!user?.id) return;
+      try {
+        const { deleteChat } = await import("@/lib/supabase-db");
+        await deleteChat(user.id, chatId);
+        toast({
+          title: "Chat deleted",
+          description: "The conversation has been deleted.",
+        });
+        refetchChats();
+      } catch (error) {
+        console.error("Error deleting chat:", error);
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to delete chat.",
+        });
+      }
+    },
+    [user?.id, toast, refetchChats]
+  );
 
-  const handleRenameChat = async () => {
-    if (!user?.uid || !renamingChatId || !tempTitle.trim()) return;
+  const handleRenameChat = useCallback(async () => {
+    if (!user?.id || !renamingChatId || !tempTitle.trim()) return;
     try {
-      await renameChat(user.uid, renamingChatId, tempTitle.trim());
+      const { renameChat } = await import("@/lib/supabase-db");
+      await renameChat(user.id, renamingChatId, tempTitle.trim());
       setRenamingChatId(null);
       setTempTitle("");
       setIsRenameDialogOpen(false);
@@ -283,6 +344,7 @@ export default function MainSidebar() {
         title: "Chat renamed",
         description: "The conversation has been renamed.",
       });
+      refetchChats();
     } catch (error) {
       console.error("Error renaming chat:", error);
       toast({
@@ -291,42 +353,55 @@ export default function MainSidebar() {
         description: "Failed to rename chat.",
       });
     }
-  };
+  }, [user?.id, renamingChatId, tempTitle, toast, refetchChats]);
 
-  const handleOpenRenameDialog = (chatId: string, chatTitle: string) => {
-    setRenamingChatId(chatId);
-    setTempTitle(chatTitle);
-    setIsRenameDialogOpen(true);
-  };
+  const handleOpenRenameDialog = useCallback(
+    (chatId: string, chatTitle: string) => {
+      setRenamingChatId(chatId);
+      setTempTitle(chatTitle);
+      setIsRenameDialogOpen(true);
+    },
+    []
+  );
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.push("/login");
-  };
+  const handleLogout = useCallback(async () => {
+    try {
+      await signOut();
+      router.push("/login");
+    } catch (error) {
+      console.error("Error logging out:", error);
+    }
+  }, [router]);
 
   return (
     <>
+      {/* Mobile Menu Button */}
       <button
         onClick={openMobile}
         aria-label="Open sidebar"
         className={cn(
-          "fixed top-4 left-4 z-50 p-2 rounded-md bg-black/60 backdrop-blur-md text-white md:hidden"
+          "fixed top-4 left-4 z-50 p-2 rounded-md border border-border/60 bg-background/80 backdrop-blur-md text-foreground shadow-sm md:hidden"
         )}
       >
         <Menu className="h-5 w-5" />
       </button>
 
+      {/* Mobile Overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[2px] md:hidden"
+          className="fixed inset-0 z-40 bg-background/80 backdrop-blur-[2px] md:hidden"
           onClick={closeMobile}
+          role="button"
+          tabIndex={0}
+          aria-label="Close sidebar"
         />
       )}
 
+      {/* Sidebar */}
       <aside
         aria-label="Sidebar"
         className={cn(
-          "relative h-[100dvh] md:h-screen shrink-0 border-r border-background bg-background flex flex-col shadow-[0_20px_80px_rgba(0,0,0,0.35)]",
+          "relative h-[100dvh] md:h-screen shrink-0 border-r border-border bg-background flex flex-col shadow-[0_20px_80px_rgba(0,0,0,0.35)]",
           "fixed inset-y-0 left-0 z-50 transition-transform duration-300 md:sticky md:top-0 md:flex md:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         )}
@@ -336,10 +411,8 @@ export default function MainSidebar() {
           overflow: isMobile ? "auto" : "hidden",
         }}
       >
-        <div
-          className="flex items-center justify-between px-3 py-3"
-          style={{ borderBottom: "1px solid rgba(51, 65, 85, 0.5)" }}
-        >
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-3 border-b border-border/60">
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -359,7 +432,7 @@ export default function MainSidebar() {
                 priority
               />
               {isCollapsed && (
-                <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-slate-950/80 text-white opacity-0 transition-opacity group-hover/logo:opacity-100">
+                <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-foreground/80 text-background opacity-0 transition-opacity group-hover/logo:opacity-100">
                   <PanelLeft size={16} />
                 </span>
               )}
@@ -368,7 +441,7 @@ export default function MainSidebar() {
           {!isCollapsed && (
             <button
               onClick={handleCollapseClick}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:text-slate-200 hover:bg-white/5 transition-all"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent/10 transition-all"
               aria-label={isMobile ? "Close sidebar" : "Collapse sidebar"}
             >
               <PanelLeft size={16} />
@@ -376,62 +449,100 @@ export default function MainSidebar() {
           )}
         </div>
 
+        {/* Action Buttons */}
         <div className="flex flex-col px-2 pt-3 gap-px">
-          <div className="relative group">
+          <button
+            type="button"
+            onClick={handleNewChat}
+            disabled={isCreatingChat}
+            className={cn(
+              "inline-flex items-center justify-center relative w-full gap-3 rounded-lg px-3 py-2 text-xs sm:text-sm font-medium text-foreground",
+              "transition duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] active:scale-[0.985] hover:bg-accent/10 active:bg-accent/20",
+              isCreatingChat && "opacity-70 cursor-not-allowed"
+            )}
+            aria-label={t.newChat}
+            aria-busy={isCreatingChat}
+          >
+            <div className="-translate-x-1 w-full flex flex-row items-center justify-start gap-3">
+              <div className="flex items-center justify-center text-primary-foreground">
+                <div className="flex items-center justify-center rounded-full size-[1.5rem] bg-primary text-primary-foreground border border-border/40 shadow-sm group-hover:-rotate-3 group-hover:scale-105 group-active:rotate-3 group-active:scale-[0.98] transition-all duration-150 ease-in-out">
+                  <Plus size={20} className="shrink-0" />
+                </div>
+              </div>
+              <span
+                className="truncate text-sm whitespace-nowrap flex-1 text-left transition-all duration-200"
+                style={{
+                  opacity: isCollapsed ? 0 : 1,
+                  width: isCollapsed ? 0 : "auto",
+                  display: "inline-block",
+                }}
+              >
+                {isCreatingChat ? t.loading : t.newChat}
+              </span>
+            </div>
+          </button>
+
+          {/* Admin Panel Button */}
+          {isAdmin && (
             <button
               type="button"
-              onClick={handleNewChat}
-              disabled={isCreatingChat}
+              onClick={() => {
+                router.push("/admin/books");
+                closeMobile();
+              }}
               className={cn(
-                "inline-flex items-center justify-center relative w-full gap-3 rounded-lg px-3 py-2 text-xs sm:text-sm font-medium text-slate-100 border border-transparent",
-                "transition duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] active:scale-[0.985] hover:bg-white/5 active:bg-white/10",
-                isCreatingChat && "opacity-70 cursor-not-allowed"
+                "inline-flex items-center justify-center relative w-full gap-3 rounded-lg px-3 py-2 text-xs sm:text-sm font-medium text-foreground mt-1",
+                "transition duration-300 ease-[cubic-bezier(0.165,0.85,0.45,1)] active:scale-[0.985] hover:bg-primary/10 active:bg-primary/20"
               )}
+              aria-label="Admin Panel"
             >
-              <div className="-translate-x-1 w-full flex flex-row items-center justify-start gap-3">
-                <div className="flex items-center justify-center text-white">
-                  <div className="flex items-center justify-center rounded-full size-[1.5rem] bg-primary text-primary-foreground border border-white/10 shadow-sm group-hover:-rotate-3 group-hover:scale-105 group-active:rotate-3 group-active:scale-[0.98] transition-all duration-150 ease-in-out">
-                    <Plus size={20} className="shrink-0 text-white" />
+              <div className="-translate-x-1 w-full flex flex-row items-center gap-3">
+                <div className="flex items-center justify-center text-primary-foreground">
+                  <div className="flex items-center justify-center rounded-full size-[1.5rem] bg-primary text-primary-foreground border border-border/40 shadow-sm transition-all">
+                    <ShieldCheck size={18} className="shrink-0" />
                   </div>
                 </div>
-                <span className="truncate text-sm whitespace-nowrap flex-1 text-left">
-                  <span
-                    className="transition-all duration-200"
-                    style={{
-                      opacity: isCollapsed ? 0 : 1,
-                      width: isCollapsed ? 0 : "auto",
-                      display: "inline-block",
-                    }}
-                  >
-                    {isCreatingChat ? t.loading : t.newChat}
+                {!isCollapsed && (
+                  <span className="truncate text-sm whitespace-nowrap flex-1 text-left">
+                    لوحة الأدمن
                   </span>
-                </span>
+                )}
               </div>
             </button>
-          </div>
+          )}
         </div>
 
+        {/* Chat List */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {!isCollapsed && (
             <div className="flex flex-col flex-1 overflow-hidden px-2">
-              <div className="flex items-center justify-between pt-4 pb-2 group/header">
-                <h3 className="text-xs uppercase tracking-wide text-slate-500 font-semibold">
+              <div className="flex items-center justify-between pt-4 pb-2">
+                <h3 className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">
                   {t.recentChats}
                 </h3>
               </div>
+
+              {/* Search Input */}
               <div className="relative mb-3">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <input
                   type="text"
                   placeholder={t.searchChats}
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full rounded-lg bg-background border border-white/5 px-9 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full rounded-lg bg-background border border-border/50 px-9 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  aria-label={t.searchChats}
                 />
               </div>
+
+              {/* Chats List */}
               <ul className="flex-1 overflow-y-auto space-y-1 pb-3 pe-2 md:pe-0">
-                {filteredChats.length === 0 ? (
-                  <li className="px-3 py-6 text-center text-sm text-slate-500 bg-background/30 rounded-lg">
+                {chatsLoading ? (
+                  <li className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    {t.loading || "Loading..."}
+                  </li>
+                ) : filteredChats.length === 0 ? (
+                  <li className="px-3 py-6 text-center text-sm text-muted-foreground bg-background/30 rounded-lg">
                     {t.noChatsFound}
                   </li>
                 ) : (
@@ -440,9 +551,7 @@ export default function MainSidebar() {
                       key={chat.id}
                       id={chat.id}
                       title={chat.title}
-                      preview={chat.lastMessagePreview}
                       active={activeChatId === chat.id}
-                      collapsed={isCollapsed}
                       onClick={() => handleOpenChat(chat.id)}
                       onDelete={() => handleDeleteChat(chat.id)}
                       onRenameStart={() =>
@@ -456,20 +565,19 @@ export default function MainSidebar() {
           )}
         </div>
 
-        <div
-          className="mt-auto w-full px-3 py-2 space-y-2"
-          style={{ borderTop: "1px solid rgba(51, 65, 85, 0.5)" }}
-        >
-
-
+        {/* User Profile Section */}
+        <div className="mt-auto w-full px-3 py-2 space-y-2 border-t border-border/60">
           {isLoggedIn && user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="w-full flex items-center gap-2.5 rounded-lg px-0 py-2 transition-all group">
                   <Avatar className="h-9 w-9 shrink-0 border border-white/10 group-hover:scale-[1.05] transition-transform duration-300">
-                    <AvatarImage src={user.photoURL || undefined} alt={user.displayName || t.appName} />
+                    <AvatarImage
+                      src={user.user_metadata?.avatar_url || undefined}
+                      alt={user.user_metadata?.display_name || t.appName}
+                    />
                     <AvatarFallback className="bg-accent/30 text-sm font-semibold">
-                      {user.displayName?.slice(0, 2)?.toUpperCase() ||
+                      {displayName?.slice(0, 2)?.toUpperCase() ||
                         user.email?.slice(0, 2)?.toUpperCase() ||
                         "UA"}
                     </AvatarFallback>
@@ -483,10 +591,10 @@ export default function MainSidebar() {
                       width: isCollapsed ? 0 : "auto",
                     }}
                   >
-                    <p className="text-sm font-medium text-slate-200 truncate">
-                      {user.displayName || "User"}
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {displayName || "User"}
                     </p>
-                    <p className="text-xs text-slate-500 truncate">
+                    <p className="text-xs text-muted-foreground truncate">
                       {user.email}
                     </p>
                   </div>
@@ -499,18 +607,40 @@ export default function MainSidebar() {
                 <div className="space-y-4 p-3">
                   <div className="flex items-center gap-3">
                     <Avatar className="h-11 w-11">
-                      <AvatarImage src={user.photoURL || undefined} />
+                      <AvatarImage
+                        src={user.user_metadata?.avatar_url || undefined}
+                      />
                       <AvatarFallback className="bg-accent/30 text-base">
-                        {user.displayName?.[0] || user.email?.[0] || "U"}
+                        {user.user_metadata?.display_name?.[0] ||
+                          user.email?.[0] ||
+                          "U"}
                       </AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
                       <p className="truncate text-sm font-semibold">
-                        {user.displayName || "User"}
+                        {user.user_metadata?.display_name || "User"}
                       </p>
                       <p className="truncate text-xs text-muted-foreground">
                         {user.email}
                       </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                      {lang === "ar" ? "الفرع الدراسي" : "Study Branch"}
+                    </p>
+                    <div className="grid grid-cols-1 gap-2">
+                      {BRANCHES.map((b) => (
+                        <ControlButton
+                          key={b.id}
+                          icon={<BookOpenCheck className="h-4 w-4" />}
+                          label={lang === "ar" ? b.label.ar : b.label.en}
+                          active={branch === b.id}
+                          collapsed={false}
+                          onClick={() => handleBranchChange(b.id)}
+                        />
+                      ))}
                     </div>
                   </div>
 
@@ -564,8 +694,9 @@ export default function MainSidebar() {
             <button
               onClick={() => router.push("/login")}
               className={cn(
-                "w-full rounded-2xl border border-white/5 bg-background py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-800/70 transition-all",
-                isCollapsed && "w-full h-10 flex items-center justify-center p-0"
+                "w-full rounded-2xl border border-border/60 bg-background py-2.5 text-sm font-medium text-foreground hover:bg-accent/10 transition-all",
+                isCollapsed &&
+                  "w-full h-10 flex items-center justify-center p-0"
               )}
             >
               {isCollapsed ? "→" : t.login}
@@ -573,6 +704,7 @@ export default function MainSidebar() {
           )}
         </div>
 
+        {/* Rename Dialog */}
         <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
           <DialogContent className="bg-background border border-border/60 text-foreground">
             <DialogHeader>
@@ -616,128 +748,129 @@ export default function MainSidebar() {
   );
 }
 
+// ==================== Sub Components ====================
+
 function RecentChatButton({
   id,
   title,
-  preview,
   active,
-  collapsed,
   onClick,
   onDelete,
   onRenameStart,
 }: {
   id: string;
   title: string;
-  preview?: string;
   active: boolean;
-  collapsed: boolean;
   onClick: () => void;
   onDelete: () => void;
   onRenameStart: () => void;
 }) {
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isDeleting) return;
+
+    setIsDeleting(true);
+    try {
+      await onDelete();
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="relative group">
       <button
         onClick={onClick}
+        disabled={isDeleting}
         className={cn(
           "inline-flex items-center justify-center relative shrink-0 select-none",
           "border-transparent transition-all font-normal duration-150 ease-in-out",
           "h-8 rounded-lg px-3 min-w-[4rem] active:scale-[0.985] whitespace-nowrap text-xs w-full overflow-hidden",
           "group py-1.5 px-4 hover:bg-accent/50 active:bg-accent active:scale-100",
           active && "bg-accent",
-          collapsed && "px-2 min-w-0 justify-center"
+          isDeleting && "opacity-50 cursor-not-allowed"
         )}
+        aria-label={`Open chat: ${title}`}
+        aria-current={active ? "page" : undefined}
       >
-        <div
-          className={cn(
-            "flex flex-row items-center justify-start gap-3 w-full transition-transform duration-200 ease-in-out",
-            collapsed ? "" : "-translate-x-2"
-          )}
-        >
-          {!collapsed && (
-            <span
-              className={cn(
-                "truncate text-sm whitespace-nowrap flex-1 text-left transition-all duration-150",
-                "group-hover:[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]",
-                active &&
+        <div className="flex flex-row items-center justify-start gap-3 w-full -translate-x-2">
+          <span
+            className={cn(
+              "truncate text-sm whitespace-nowrap flex-1 text-left transition-all duration-150",
+              "group-hover:[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]",
+              active &&
                 "[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]"
-              )}
-            >
-              {title}
-            </span>
-          )}
+            )}
+          >
+            {title}
+          </span>
         </div>
       </button>
 
-      {/* زر الـ ... مثل Claude مع Dropdown فعلي */}
-      {!collapsed && (
-        <div
-          className={cn(
-            "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity duration-200 ease-in-out",
-            active
-              ? "opacity-100"
-              : "opacity-0 group-hover:opacity-100 pointer-events-auto"
-          )}
-        >
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                className="h-8 w-8 rounded-md active:scale-95 hover:bg-accent/40 transition-all duration-150 flex items-center justify-center"
-                aria-label={`More options for ${title}`}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <MoreVertical className="h-4 w-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="bg-background border border-border/60 text-foreground"
+      {/* Actions Dropdown */}
+      <div
+        className={cn(
+          "absolute right-0 top-1/2 -translate-y-1/2 transition-opacity duration-200 ease-in-out",
+          active
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-100 pointer-events-auto"
+        )}
+      >
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="h-8 w-8 rounded-md active:scale-95 hover:bg-accent/40 transition-all duration-150 flex items-center justify-center"
+              aria-label={`More options for ${title}`}
+              onClick={(e) => e.stopPropagation()}
             >
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRenameStart();
-                }}
-                className="cursor-pointer hover:bg-accent/20"
-              >
-                <Edit2 className="h-4 w-4 mr-2" />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete();
-                }}
-                className="cursor-pointer hover:bg-accent/20 text-red-500"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      )}
+              <MoreVertical className="h-4 w-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="bg-background border border-border/60 text-foreground"
+          >
+            <DropdownMenuItem
+              onClick={(e) => {
+                e.stopPropagation();
+                onRenameStart();
+              }}
+              className="cursor-pointer hover:bg-accent/20"
+            >
+              <Edit2 className="h-4 w-4 mr-2" />
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="cursor-pointer hover:bg-accent/20 text-red-500 focus:text-red-500"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              {isDeleting ? "Deleting..." : "Delete"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }
 
-// Control Button (Theme / Language)
+// Control Button (Theme / Language / Branch)
 function ControlButton({
   icon,
-  compactIcon,
   label,
   active,
   collapsed,
   onClick,
 }: {
   icon: React.ReactNode;
-  compactIcon?: React.ReactNode;
   label: string;
   active: boolean;
   collapsed: boolean;
   onClick: () => void;
 }) {
-  const iconNode = collapsed && compactIcon ? compactIcon : icon;
   return (
     <button
       onClick={onClick}
@@ -751,8 +884,9 @@ function ControlButton({
           : "w-full justify-start gap-3 px-4 py-2.5"
       )}
       aria-label={label}
+      aria-pressed={active}
     >
-      <span className="flex items-center justify-center">{iconNode}</span>
+      <span className="flex items-center justify-center">{icon}</span>
       {!collapsed && <span>{label}</span>}
       {collapsed && (
         <span className="pointer-events-none absolute left-full ml-4 whitespace-nowrap rounded-lg bg-black/90 px-3 py-2 text-xs opacity-0 transition-opacity group-hover:opacity-100 z-50">

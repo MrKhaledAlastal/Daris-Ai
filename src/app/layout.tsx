@@ -5,6 +5,7 @@ import { AuthProvider } from "@/contexts/auth-provider";
 import { LanguageProvider } from "@/contexts/language-provider";
 import { ThemeProvider } from "@/contexts/theme-provider";
 import "./globals.css";
+import BranchSelectionDialog from "@/components/auth/branch-selection-dialog";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -67,6 +68,7 @@ export default function RootLayout({
             <LanguageProvider>
               <div className="animated-grid-background">{children}</div>
               <Toaster />
+              <BranchSelectionDialog />
             </LanguageProvider>
           </AuthProvider>
         </ThemeProvider>

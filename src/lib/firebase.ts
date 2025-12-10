@@ -1,4 +1,11 @@
 
+// ⚠️ DEPRECATED: Firebase has been migrated to Supabase
+// This file is kept for reference only and should not be imported in new code
+// Use Supabase equivalents instead:
+// - Auth: src/lib/supabase-auth.ts
+// - Database: src/lib/supabase-db.ts
+// - Storage: Supabase Storage API
+
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore } from 'firebase/firestore';

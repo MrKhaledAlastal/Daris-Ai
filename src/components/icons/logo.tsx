@@ -7,6 +7,13 @@ export function Logo({
   href,
   className = "",
   ...props
+}: {
+  alt?: string;
+  width?: number;
+  height?: number;
+  href?: string;
+  className?: string;
+  [key: string]: any;
 }) {
   const img = (
     <Image

@@ -25,15 +25,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <SidebarProvider>
+    <SidebarProvider dir="ltr">
       <MainSidebar />
       <div
         className="flex flex-col w-full min-h-dvh md:h-screen overflow-hidden transition-[margin] duration-200"
-        style={
-          dir === "rtl"
-            ? ({ marginRight: "var(--sidebar-offset)" } as React.CSSProperties)
-            : ({ marginLeft: "var(--sidebar-offset)" } as React.CSSProperties)
-        }
+        style={{ marginLeft: "var(--sidebar-offset)" }}
+        dir={dir}
       >
         {/* <Header /> */}
         <main className="flex-1 flex flex-col overflow-hidden">{children}</main>

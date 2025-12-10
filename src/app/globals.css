@@ -158,3 +158,23 @@ textarea.auto-expand::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
+
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 10px;         /* عرض السكروول */
+  height: 10px;        /* للسكروول الأفقي */
+}
+
+::-webkit-scrollbar-track {
+  background: transparent; /* خلفية المسار */
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--primary);   /* ← لون PRIMARY الأخضر */
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #2eaa4c;   /* لون أغمق عند المرور */
+}
