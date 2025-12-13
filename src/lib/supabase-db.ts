@@ -121,8 +121,19 @@ export async function saveMessage(
     last_message_preview: preview,
   };
 
+  // 🔥 Only update title on FIRST user message (when title is still "New chat")
   if (message.role === "user" && message.content?.trim()) {
-    update.title = message.content.substring(0, 50);
+    // Check current chat title
+    const { data: chatData } = await supabase
+      .from("chats")
+      .select("title")
+      .eq("id", chatId)
+      .single();
+
+    // Only update title if it's still "New chat" or empty
+    if (!chatData?.title || chatData.title === "New chat") {
+      update.title = message.content.substring(0, 50);
+    }
   }
 
   const { error: updateError } = await supabase

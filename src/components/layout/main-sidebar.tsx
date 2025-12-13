@@ -149,9 +149,12 @@ export default function MainSidebar() {
 
     fetchChats();
 
-    // Set up real-time subscription
+    // Set up real-time subscription with unique channel name per user
+    const channelName = `sidebar-chats-${user.id}-${Date.now()}`;
+    console.log("🔔 Setting up chats subscription:", channelName);
+
     const channel = supabase
-      .channel("chats-changes")
+      .channel(channelName)
       .on(
         "postgres_changes",
         {
@@ -160,16 +163,107 @@ export default function MainSidebar() {
           table: "chats",
           filter: `user_id=eq.${user.id}`,
         },
-        () => {
-          fetchChats();
+        (payload) => {
+          console.log("🔄 Chat change detected:", payload.eventType, payload);
+
+          if (payload.eventType === "INSERT") {
+            const newChat = payload.new as any;
+            console.log("➕ New chat created:", newChat);
+            setChats((prev) => {
+              // Check if chat already exists
+              const exists = prev.some((c) => c.id === newChat.id);
+              if (exists) return prev;
+
+              // Add new chat at the beginning
+              return [
+                {
+                  id: newChat.id,
+                  title: newChat.title || "New chat",
+                  lastMessagePreview: newChat.last_message_preview,
+                },
+                ...prev,
+              ];
+            });
+          } else if (payload.eventType === "UPDATE") {
+            const updatedChat = payload.new as any;
+            console.log("✏️ Chat updated:", updatedChat);
+            setChats((prev) =>
+              prev.map((c) =>
+                c.id === updatedChat.id
+                  ? {
+                    ...c,
+                    title: updatedChat.title || c.title,
+                    lastMessagePreview: updatedChat.last_message_preview,
+                  }
+                  : c
+              )
+            );
+          } else if (payload.eventType === "DELETE") {
+            const deletedChat = payload.old as any;
+            console.log("🗑️ Chat deleted:", deletedChat);
+            setChats((prev) => prev.filter((c) => c.id !== deletedChat.id));
+          }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log("📡 Subscription status:", status);
+      });
 
     return () => {
+      console.log("🔕 Unsubscribing from chats:", channelName);
       channel.unsubscribe();
     };
   }, [user?.id]);
+
+  // 🔥 Listen for custom event when new chat is created (fallback for Realtime)
+  useEffect(() => {
+    const handleNewChat = (event: CustomEvent) => {
+      const newChat = event.detail;
+      console.log("🔔 New chat event received:", newChat);
+
+      setChats((prev) => {
+        // Check if chat already exists
+        const exists = prev.some((c) => c.id === newChat.id);
+        if (exists) return prev;
+
+        // Add new chat at the beginning
+        return [
+          {
+            id: newChat.id,
+            title: newChat.title || "New chat",
+            lastMessagePreview: newChat.lastMessagePreview || "",
+          },
+          ...prev,
+        ];
+      });
+    };
+
+    // 🔥 Listen for chat title updates
+    const handleTitleUpdate = (event: CustomEvent) => {
+      const { id, title, lastMessagePreview } = event.detail;
+      console.log("✏️ Chat title update received:", id, title);
+
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? {
+              ...c,
+              title: title || c.title,
+              lastMessagePreview: lastMessagePreview || c.lastMessagePreview,
+            }
+            : c
+        )
+      );
+    };
+
+    window.addEventListener("newChatCreated", handleNewChat as EventListener);
+    window.addEventListener("chatTitleUpdated", handleTitleUpdate as EventListener);
+
+    return () => {
+      window.removeEventListener("newChatCreated", handleNewChat as EventListener);
+      window.removeEventListener("chatTitleUpdated", handleTitleUpdate as EventListener);
+    };
+  }, []);
 
   const refetchChats = useCallback(async () => {
     if (!user?.id) return;
@@ -287,6 +381,21 @@ export default function MainSidebar() {
       setIsCreatingChat(true);
       const { createChat } = await import("@/lib/supabase-db");
       const chatId = await createChat(user.id);
+
+      // 🔥 Add new chat to list immediately
+      const newChat = {
+        id: chatId,
+        title: "New chat",
+        lastMessagePreview: "",
+      };
+
+      setChats((prev) => {
+        // Check if already exists
+        const exists = prev.some((c) => c.id === chatId);
+        if (exists) return prev;
+        return [newChat, ...prev];
+      });
+
       router.push(`/chat?chatId=${chatId}`);
     } catch (error) {
       console.error("Error creating chat:", error);
@@ -696,7 +805,7 @@ export default function MainSidebar() {
               className={cn(
                 "w-full rounded-2xl border border-border/60 bg-background py-2.5 text-sm font-medium text-foreground hover:bg-accent/10 transition-all",
                 isCollapsed &&
-                  "w-full h-10 flex items-center justify-center p-0"
+                "w-full h-10 flex items-center justify-center p-0"
               )}
             >
               {isCollapsed ? "→" : t.login}
@@ -801,7 +910,7 @@ function RecentChatButton({
               "truncate text-sm whitespace-nowrap flex-1 text-left transition-all duration-150",
               "group-hover:[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]",
               active &&
-                "[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]"
+              "[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]"
             )}
           >
             {title}

@@ -146,63 +146,63 @@ export default function ChatInterface() {
 
   const quickPrompts = isArabic
     ? [
-        { text: "اشرحلي قاعدة الماضي البسيط", category: "لغة إنجليزية" },
-        { text: "لخصلي درس الخلية في الأحياء", category: "أحياء" },
-        { text: "حل سؤال هندسة فراغية", category: "رياضيات" },
-        { text: "اعطيني خطة مذاكرة أسبوعية", category: "تنظيم" },
-      ]
+      { text: "اشرحلي قاعدة الماضي البسيط", category: "لغة إنجليزية" },
+      { text: "لخصلي درس الخلية في الأحياء", category: "أحياء" },
+      { text: "حل سؤال هندسة فراغية", category: "رياضيات" },
+      { text: "اعطيني خطة مذاكرة أسبوعية", category: "تنظيم" },
+    ]
     : [
-        { text: "Explain the present simple tense", category: "English" },
-        { text: "Summarize the biology cell lesson", category: "Biology" },
-        { text: "Solve a 3D geometry problem", category: "Math" },
-        { text: "Draft a weekly study plan", category: "Planning" },
-      ];
+      { text: "Explain the present simple tense", category: "English" },
+      { text: "Summarize the biology cell lesson", category: "Biology" },
+      { text: "Solve a 3D geometry problem", category: "Math" },
+      { text: "Draft a weekly study plan", category: "Planning" },
+    ];
 
   const highlightCards = isArabic
     ? [
-        {
-          title: "مراجعة ذكية",
-          description: "احصل على ملخصات دقيقة لأهم الدروس في ثوانٍ.",
-          icon: BookOpen,
-        },
-        {
-          title: "تحليل عميق",
-          description: "حلل الأسئلة المعقدة بخطوات واضحة وسهلة الفهم.",
-          icon: Brain,
-        },
-        {
-          title: "خطط مخصصة",
-          description: "صمّم جدول دراسي مرن يناسب وقتك وأهدافك.",
-          icon: Target,
-        },
-        {
-          title: "إلهام بصري",
-          description: "مخططات ورسومات تساعدك على تثبيت المعلومة بسرعة.",
-          icon: Lightbulb,
-        },
-      ]
+      {
+        title: "مراجعة ذكية",
+        description: "احصل على ملخصات دقيقة لأهم الدروس في ثوانٍ.",
+        icon: BookOpen,
+      },
+      {
+        title: "تحليل عميق",
+        description: "حلل الأسئلة المعقدة بخطوات واضحة وسهلة الفهم.",
+        icon: Brain,
+      },
+      {
+        title: "خطط مخصصة",
+        description: "صمّم جدول دراسي مرن يناسب وقتك وأهدافك.",
+        icon: Target,
+      },
+      {
+        title: "إلهام بصري",
+        description: "مخططات ورسومات تساعدك على تثبيت المعلومة بسرعة.",
+        icon: Lightbulb,
+      },
+    ]
     : [
-        {
-          title: "Smart reviews",
-          description: "Get sharp summaries for tricky lessons in seconds.",
-          icon: BookOpen,
-        },
-        {
-          title: "Deep analysis",
-          description: "Break down hard questions with clear, guided steps.",
-          icon: Brain,
-        },
-        {
-          title: "Custom plans",
-          description: "Design flexible study plans around your schedule.",
-          icon: Target,
-        },
-        {
-          title: "Visual sparks",
-          description: "Diagrams and cues that help ideas stick faster.",
-          icon: Lightbulb,
-        },
-      ];
+      {
+        title: "Smart reviews",
+        description: "Get sharp summaries for tricky lessons in seconds.",
+        icon: BookOpen,
+      },
+      {
+        title: "Deep analysis",
+        description: "Break down hard questions with clear, guided steps.",
+        icon: Brain,
+      },
+      {
+        title: "Custom plans",
+        description: "Design flexible study plans around your schedule.",
+        icon: Target,
+      },
+      {
+        title: "Visual sparks",
+        description: "Diagrams and cues that help ideas stick faster.",
+        icon: Lightbulb,
+      },
+    ];
 
   // =========================================================
   // Helper: Render Markdown content
@@ -372,18 +372,18 @@ export default function ChatInterface() {
           console.log("✅ تم تحميل", existingMessages.length, "رسائل");
           const arr = existingMessages.map(
             (d: any) =>
-              ({
-                id: d.id,
-                role: d.role,
-                content: d.content,
-                imageBase64: d.image_data_uri || null,
-                fileUrl: d.file_url || null,
-                fileName: d.file_name || null,
-                source: d.source,
-                sourceBookName: d.source_book_name,
-                sourcePageNumber: d.source_page_number,
-                lang: d.lang,
-              } as Message)
+            ({
+              id: d.id,
+              role: d.role,
+              content: d.content,
+              imageBase64: d.image_data_uri || null,
+              fileUrl: d.file_url || null,
+              fileName: d.file_name || null,
+              source: d.source,
+              sourceBookName: d.source_book_name,
+              sourcePageNumber: d.source_page_number,
+              lang: d.lang,
+            } as Message)
           );
           setMessages(arr);
         }
@@ -439,12 +439,12 @@ export default function ChatInterface() {
             prev.map((m) =>
               m.id === updatedMessage.id
                 ? {
-                    ...m,
-                    content: updatedMessage.content,
-                    source: updatedMessage.source,
-                    sourceBookName: updatedMessage.source_book_name,
-                    sourcePageNumber: updatedMessage.source_page_number,
-                  }
+                  ...m,
+                  content: updatedMessage.content,
+                  source: updatedMessage.source,
+                  sourceBookName: updatedMessage.source_book_name,
+                  sourcePageNumber: updatedMessage.source_page_number,
+                }
                 : m
             )
           );
@@ -548,6 +548,19 @@ export default function ChatInterface() {
           chatId = await createChat(uid, msg || "صورة");
           setCurrentChatId(chatId);
           router.replace(`/chat?chatId=${chatId}`);
+
+          // 🔥 Dispatch custom event to update sidebar immediately
+          console.log("📤 Dispatching newChatCreated event:", chatId);
+          window.dispatchEvent(
+            new CustomEvent("newChatCreated", {
+              detail: {
+                id: chatId,
+                title: msg ? msg.substring(0, 50) : "New chat",
+                lastMessagePreview: msg ? msg.substring(0, 80) : "",
+              },
+            })
+          );
+          console.log("✅ Event dispatched successfully");
         }
 
         // Upload image
@@ -613,6 +626,20 @@ export default function ChatInterface() {
               )
             );
           }, 100);
+        }
+
+        // 🔥 Update chat title in sidebar with the user's FIRST message only
+        const isFirstMessage = messages.length === 0;
+        if (msg && chatId && isFirstMessage) {
+          window.dispatchEvent(
+            new CustomEvent("chatTitleUpdated", {
+              detail: {
+                id: chatId,
+                title: msg.substring(0, 50),
+                lastMessagePreview: msg.substring(0, 80),
+              },
+            })
+          );
         }
 
         // Start AI typing animation
@@ -709,14 +736,14 @@ export default function ChatInterface() {
             prev.map((m) =>
               m.id === tempMessageId
                 ? {
-                    ...m,
-                    id: realMessageId,
-                    content: result.answer,
-                    source: result.source,
-                    sourceBookName: result.sourceBookName,
-                    sourcePageNumber: result.sourcePageNumber,
-                    lang: result.lang as "ar" | "en",
-                  }
+                  ...m,
+                  id: realMessageId,
+                  content: result.answer,
+                  source: result.source,
+                  sourceBookName: result.sourceBookName,
+                  sourcePageNumber: result.sourcePageNumber,
+                  lang: result.lang as "ar" | "en",
+                }
                 : m
             )
           );
@@ -1114,42 +1141,44 @@ export default function ChatInterface() {
                 }}
                 disabled={isSendingMessage || isAssistantTyping}
               />
+              {/* 🔥 Single button that changes between Send/Loading/Stop */}
               <Button
                 type="button"
                 size="icon"
                 className={cn(
                   "h-9 w-9 transition-all duration-300",
-                  input.trim() || attachedImage || attachedFile
-                    ? "bg-primary hover:scale-110 hover:shadow-lg active:scale-95"
-                    : "bg-muted"
+                  isStreaming
+                    ? "bg-red-500/80 hover:bg-red-600 active:scale-95"
+                    : input.trim() || attachedImage || attachedFile
+                      ? "bg-primary hover:scale-110 hover:shadow-lg active:scale-95"
+                      : "bg-muted"
                 )}
                 disabled={
-                  isPending ||
-                  isSendingMessage ||
-                  isAssistantTyping ||
-                  (!input.trim() && !attachedImage && !attachedFile)
+                  !isStreaming &&
+                  (isPending ||
+                    isSendingMessage ||
+                    isAssistantTyping ||
+                    (!input.trim() && !attachedImage && !attachedFile))
                 }
-                onClick={sendMessage}
+                onClick={isStreaming ? handleStopStreaming : sendMessage}
+                title={
+                  isStreaming
+                    ? lang === "ar"
+                      ? "إيقاف الرد"
+                      : "Stop response"
+                    : lang === "ar"
+                      ? "إرسال"
+                      : "Send"
+                }
               >
-                {isSendingMessage || isPending ? (
+                {isStreaming ? (
+                  <X className="h-4 w-4" />
+                ) : isSendingMessage || isPending || isAssistantTyping ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
               </Button>
-
-              {/* 🆕 Stop Button - يظهر فقط عند الـ streaming */}
-              {isStreaming && (
-                <Button
-                  type="button"
-                  size="icon"
-                  className="h-9 w-9 bg-red-500/80 hover:bg-red-600 active:scale-95 transition-all duration-300"
-                  onClick={handleStopStreaming}
-                  title={lang === "ar" ? "إيقاف الرد" : "Stop response"}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
             </div>
           </div>
 

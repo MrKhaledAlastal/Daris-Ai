@@ -1,56 +1,43 @@
 'use server';
 
 /**
- * @fileOverview Summarizes sections of uploaded textbooks for quick comprehension.
- *
- * - summarizeTextbookContent - A function that handles the summarization process.
- * - SummarizeTextbookContentInput - The input type for the summarizeTextbookContent function.
- * - SummarizeTextbookContentOutput - The return type for the summarizeTextbookContent function.
+ * @fileOverview Summarize textbook content using Groq.
  */
 
-import {ai} from '@/ai/genkit';
-import {z} from 'genkit';
+import { z } from 'zod';
+import { askAI } from '@/ai/router';
 
 const SummarizeTextbookContentInputSchema = z.object({
-  textbookSection: z
-    .string()
-    .describe('The section of the textbook to be summarized.'),
+  textbookSection: z.string(),
 });
-export type SummarizeTextbookContentInput = z.infer<
-  typeof SummarizeTextbookContentInputSchema
->;
+
+export type SummarizeTextbookContentInput = z.infer<typeof SummarizeTextbookContentInputSchema>;
 
 const SummarizeTextbookContentOutputSchema = z.object({
-  summary: z
-    .string()
-    .describe('A concise summary of the textbook section.'),
+  summary: z.string(),
 });
-export type SummarizeTextbookContentOutput = z.infer<
-  typeof SummarizeTextbookContentOutputSchema
->;
+
+export type SummarizeTextbookContentOutput = z.infer<typeof SummarizeTextbookContentOutputSchema>;
 
 export async function summarizeTextbookContent(
   input: SummarizeTextbookContentInput
 ): Promise<SummarizeTextbookContentOutput> {
-  return summarizeTextbookContentFlow(input);
-}
+  const systemPrompt = `You are an expert summarizer. Distill complex information into key points.
+Respond with valid JSON only:
+{
+  "summary": "your summary here"
+}`;
 
-const prompt = ai.definePrompt({
-  name: 'summarizeTextbookContentPrompt',
-  model: 'gemini-1.5-flash',
-  input: {schema: SummarizeTextbookContentInputSchema},
-  output: {schema: SummarizeTextbookContentOutputSchema},
-  prompt: `You are an expert summarizer, able to distill complex information into its key points.\n\nSummarize the following textbook section:\n\n{{{textbookSection}}}`,
-});
+  const response = await askAI({
+    system: systemPrompt,
+    question: `Summarize the following textbook section:\n\n${input.textbookSection}`,
+    jsonMode: true,
+  });
 
-const summarizeTextbookContentFlow = ai.defineFlow(
-  {
-    name: 'summarizeTextbookContentFlow',
-    inputSchema: SummarizeTextbookContentInputSchema,
-    outputSchema: SummarizeTextbookContentOutputSchema,
-  },
-  async input => {
-    const {output} = await prompt(input);
-    return output!;
+  try {
+    const parsed = JSON.parse(response);
+    return { summary: parsed.summary || response };
+  } catch {
+    return { summary: response };
   }
-);
+}

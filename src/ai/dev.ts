@@ -1,9 +1,5 @@
-'use client';
+// DEPRECATED: This dev file is no longer needed.
+// Genkit has been removed from the project.
+// The project now uses Groq directly.
 
-import '@/ai/genkit';
-import {config} from 'dotenv';
-config();
-
-import '@/ai/flows/generate-practice-questions.ts';
-import '@/ai/flows/summarize-textbook-content.ts';
 import '@/ai/flows/answer-study-questions.ts';

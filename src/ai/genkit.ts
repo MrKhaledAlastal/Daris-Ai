@@ -1,11 +1,4 @@
-// src/ai/genkit.ts
-import { genkit } from "genkit";
-import { googleAI } from "@genkit-ai/google-genai";
+// DEPRECATED: Genkit is no longer used.
+// The project now uses Groq directly via src/ai/groq.ts
 
-export const ai = genkit({
-  plugins: [
-    googleAI({
-      apiKey: process.env.GOOGLE_GENAI_API_KEY!,
-    }),
-  ],
-});
+export const ai = null;

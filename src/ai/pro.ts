@@ -1,16 +1,19 @@
-import { ai } from "@/ai/genkit";
+// DEPRECATED: Pro model is no longer used.
+// The project now uses Groq Llama 3.1 via router.ts
 
-export async function askPro(systemPrompt: string, question: string, history: any[] = []) {
-  const messages = [
-    { role: "system", content: systemPrompt },
-    ...history,
-    { role: "user", content: question },
-  ];
+import { askAI } from "./router";
 
-  const resp = await (ai as any).generate({
-    model: "googleai/models/gemini-2.5-pro",
-    messages,
+export async function askPro(
+  systemPrompt: string,
+  question: string,
+  history: any[] = []
+): Promise<string> {
+  return askAI({
+    system: systemPrompt,
+    question,
+    history: history.map((h) => ({
+      role: h.role as "user" | "assistant",
+      content: h.content,
+    })),
   });
-
-  return resp.outputText();
 }

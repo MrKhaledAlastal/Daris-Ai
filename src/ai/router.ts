@@ -1,9 +1,12 @@
-import { askFlash } from "./flash";
+// src/ai/router.ts
+// Routes all AI requests through Groq (Llama 3.3)
+
+import { askGroq } from "./groq";
 
 export interface AskAIInput {
   question: string;
   system: string;
-  history?: { role: "user" | "assistant"; content: string; imageBase64?: string }[];
+  history?: { role: "user" | "assistant"; content: string }[];
   imageBase64?: string;
   pdfBase64?: string;
   useWebSearch?: boolean;
@@ -14,50 +17,49 @@ export async function askAI({
   question,
   system,
   history = [],
-  imageBase64,
-  pdfBase64,
-  useWebSearch,
   jsonMode = false,
 }: AskAIInput): Promise<string> {
 
-  // ✅ 1) sanitize history (لا نثق في assistant من العميل)
+  // Sanitize history
   const safeHistory = (history || [])
     .slice(-8)
     .map((m) => ({
-      role: m.role === "assistant" ? "user" : m.role, // downgrade
+      role: m.role as "user" | "assistant",
       content: m.content,
-      ...(m.imageBase64 ? { imageBase64: m.imageBase64 } : {}),
     }));
 
-  // ✅ 2) لو jsonMode مفعّل، نضيف تذكير واضح في آخر السؤال نفسه
+  // Build question
   let finalQuestion = question?.trim() || "";
 
   if (jsonMode) {
-    finalQuestion += `
-
-[IMPORTANT] You MUST respond with valid JSON only. No markdown, no extra text.
-[مهم] يجب أن يكون الرد بصيغة JSON صحيحة فقط بدون أي نص خارج كائن JSON.`;
+    finalQuestion += "\n\n[أجب بصيغة JSON فقط]";
   }
 
-  // ✅ 3) لو حابب تبقي على تعديل الـ system تبعك برضو ما في مشكلة
+  // Build system
   let finalSystem = system;
   if (jsonMode) {
-    finalSystem = `${system}
-
-(REMINDER: Model must output ONLY valid JSON – no markdown, no prose outside JSON object.)`;
+    finalSystem += "\n\n(تذكير: أجب بصيغة JSON صحيحة فقط)";
   }
 
-  const pdfObject = pdfBase64
-    ? { base64: pdfBase64, mime: "application/pdf" }
-    : null;
+  const response = await askGroq({
+    systemPrompt: finalSystem,
+    question: finalQuestion,
+    history: safeHistory,
+    temperature: 0.3,
+    maxTokens: 4096,
+  });
 
-  return askFlash(
-    finalSystem,
-    finalQuestion,
-    safeHistory,
-    imageBase64,
-    pdfObject,
-    useWebSearch,
-    jsonMode
-  );
+  if (jsonMode) {
+    let cleaned = response.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        JSON.parse(jsonMatch[0]);
+        return jsonMatch[0];
+      } catch { }
+    }
+    return JSON.stringify({ answer: response, citations: [] });
+  }
+
+  return response;
 }

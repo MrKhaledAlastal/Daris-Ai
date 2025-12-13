@@ -1,5 +1,7 @@
-// src/ai/vision.ts
-import { askFlash } from "./flash";
+// DEPRECATED: Vision is now handled via router.ts
+// Groq Llama 3.1 doesn't support vision, so images are handled as text descriptions
+
+import { askAI } from "./router";
 
 export async function askVision(
   systemPrompt: string,
@@ -7,8 +9,10 @@ export async function askVision(
   imageBase64?: string,
   pdfBase64?: string
 ): Promise<string> {
-  // Delegate to askFlash which now handles multimodal inputs using Gemini 2.5 Flash
-  return askFlash(systemPrompt, question, [], imageBase64, pdfBase64);
+  return askAI({
+    system: systemPrompt,
+    question,
+    imageBase64,
+    pdfBase64,
+  });
 }
-
- 
