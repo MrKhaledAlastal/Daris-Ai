@@ -104,37 +104,37 @@ export async function answerStudyQuestion(
   let retrievedChunks: any[] = [];
   let sourceInfo: { bookName: string; pageNumber: number } | null = null;
 
-  if (booksForContext.length > 0 && !input.expandSearchOnline) {
+    if (booksForContext.length > 0 && !input.expandSearchOnline) {
     try {
       const { supabaseAdmin } = await import("@/lib/supabase-admin");
-      const { generateEmbedding } = await import("@/lib/embeddings");
 
-      const qEmbedding = await generateEmbedding(input.question);
-      const ids = booksForContext.map((b) => b.id);
+      const { data, error } = await supabaseAdmin.rpc(
+        "match_book_pages_text",
+        {
+          query_text: input.question,
+          match_count: 20,
+        }
+      );
 
-      // Vector search
-      const { data } = await supabaseAdmin.rpc("match_book_pages_v2", {
-        query_embedding: qEmbedding,
-        match_threshold: 0.15,
-        match_count: 20,
-        filter_book_ids: ids,
-      });
-
-      if (data && data.length > 0) {
+      if (error) {
+        console.error("❌ RAG RPC Error:", error);
+      } else if (data && data.length > 0) {
         retrievedChunks = data;
+
         sourceInfo = {
           bookName: bookIdToName[data[0].book_id] || "كتاب",
           pageNumber: data[0].page_number,
         };
 
-        // Build context with clear page markers
         context = data
-          .map((p: any, i: number) =>
-            `[مقطع ${i + 1}]\nالكتاب: ${bookIdToName[p.book_id] || "غير معروف"}\nالصفحة: ${p.page_number}\nالمحتوى:\n${p.content}\n---`
+          .map(
+            (p: any) =>
+              `[صفحة ${p.page_number}]
+${p.content}`
           )
           .join("\n\n");
 
-        console.log(`✅ RAG: ${data.length} chunks retrieved`);
+        console.log(`✅ RAG(TEXT): ${data.length} chunks retrieved`);
       } else {
         console.log("⚠️ No chunks found");
       }
@@ -142,6 +142,7 @@ export async function answerStudyQuestion(
       console.error("❌ RAG Error:", err);
     }
   }
+
 
   /* ------------------ Build System Prompt ------------------ */
   let systemPrompt: string;
@@ -186,10 +187,20 @@ export async function answerStudyQuestion(
 3. **لا تخمن أو تستنتج** معلومات غير موجودة
 4. **لا تضف معلومات** من معرفتك العامة
 
-## تنسيق الإجابة:
-- استخدم Markdown
-- استخدم LaTeX للمعادلات: $$formula$$
-- كن مختصراً ودقيقاً
+## تنسيق الإجابة (إلزامي):
+1. قسّم الإجابة إلى فقرات واضحة.
+2. عند ذكر أي:
+   - تعريف
+   - قانون
+   - قاعدة
+   - تفسير علمي
+   يجب أن تضع رقم الصفحة مباشرة بعده بين قوسين.
+   مثال: (صفحة 112)
+3. لا تذكر صفحة إلا إذا كانت موجودة في المحتوى.
+4. لا تجمع أكثر من صفحة لنفس الفكرة.
+5. في نهاية الإجابة:
+   - اذكر اسم الكتاب فقط بدون أرقام صفحات.
+
 
 ## المصادر (مطلوب دائماً):
 يجب أن تنتهي كل إجابة بقسم المصادر بهذا الشكل بالضبط:
@@ -259,4 +270,6 @@ ${context}
     sourcePageNumber: sourceInfo?.pageNumber,
     lang,
   };
+
+  
 }
