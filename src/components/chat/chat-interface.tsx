@@ -306,19 +306,26 @@ export default function ChatInterface() {
     setWelcomeExit(false);
   }, [currentChatId]);
 
+  // 🔥 FIX: Use ref to track previous messages count and avoid dependency loop
+  const prevMessagesCountRef = useRef(0);
+
   useEffect(() => {
-    if (messages.length === 0) {
-      if (!showWelcome) {
-        setShowWelcome(true);
-        setWelcomeExit(false);
-      }
-    } else {
-      if (showWelcome) {
-        setWelcomeExit(true);
-        setTimeout(() => setShowWelcome(false), 600);
-      }
+    const prevCount = prevMessagesCountRef.current;
+    const currentCount = messages.length;
+
+    // Only trigger transitions when count actually changes
+    if (prevCount === 0 && currentCount > 0) {
+      // Messages added - hide welcome
+      setWelcomeExit(true);
+      setTimeout(() => setShowWelcome(false), 600);
+    } else if (prevCount > 0 && currentCount === 0) {
+      // Messages cleared - show welcome
+      setShowWelcome(true);
+      setWelcomeExit(false);
     }
-  }, [messages.length, showWelcome]);
+
+    prevMessagesCountRef.current = currentCount;
+  }, [messages.length]);
 
   // =========================================================
   // Dropzone for file upload
@@ -533,15 +540,28 @@ export default function ChatInterface() {
     setAttachedImage(null);
     setAttachedFile(null);
 
+    // 🔥 FIX: إخفاء شاشة الترحيب فوراً عند الإرسال (بدون انتظار animation)
     if (showWelcome) {
-      setWelcomeExit(true);
-      setTimeout(() => setShowWelcome(false), 600);
+      setShowWelcome(false);
+      setWelcomeExit(false);
     }
+
+    // 🔥 OPTIMISTIC UPDATE: عرض الرسالة فوراً قبل أي عملية
+    const tempUserMessageId = `temp-user-${Date.now()}`;
+    const tempUserMessage: Message = {
+      id: tempUserMessageId,
+      role: "user",
+      content: msg,
+      imageBase64: img || null, // Use local base64 immediately
+      fileUrl: null, // File URL not ready yet
+      fileName: file?.name || null,
+    };
+    setMessages((prev) => [...prev, tempUserMessage]);
 
     startTransition(async () => {
       try {
         setIsSendingMessage(true);
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        // await new Promise((resolve) => setTimeout(resolve, 300)); // 🚫 Removed artificial delay
 
         let chatId = currentChatId;
         if (!chatId) {
@@ -592,19 +612,7 @@ export default function ChatInterface() {
           uploadedFileUrl = await uploadFileToSupabase(file.file, uid);
         }
 
-        // 🔥 FIX: أضف رسالة المستخدم للـ UI فوراً
-        const tempUserMessageId = `temp-user-${Date.now()}`;
-        const tempUserMessage: Message = {
-          id: tempUserMessageId,
-          role: "user",
-          content: msg,
-          imageBase64: uploadedImageUrl || img || null,
-          fileUrl: uploadedFileUrl || null,
-          fileName: file?.name || null,
-        };
-
-        setMessages((prev) => [...prev, tempUserMessage]);
-        setIsSendingMessage(false);
+        // Save user message to database
 
         // Save user message to database
         const savedUserMessage = await saveMessage(uid, chatId!, {
