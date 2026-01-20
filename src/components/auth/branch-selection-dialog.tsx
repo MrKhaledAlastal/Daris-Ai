@@ -20,8 +20,11 @@ export default function BranchSelectionDialog() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    // If we are done loading, have a user, but NO branch, open the dialog
-    if (!loading && user && !branch) {
+    const isDevSession =
+      typeof window !== "undefined" &&
+      localStorage.getItem("isDevSession") === "true";
+
+    if (!loading && user && !branch && !isDevSession) {
       setIsOpen(true);
     } else {
       setIsOpen(false);
@@ -41,7 +44,7 @@ export default function BranchSelectionDialog() {
 
     try {
       const { error } = await supabase
-        .from("users")
+        .from("profiles")
         .update({ branch: selectedBranch })
         .eq("id", user.id);
 

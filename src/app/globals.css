@@ -41,7 +41,7 @@
   }
 
   .dark {
-    --background: 0 0% 8%;
+    --background: 160 20% 4%;
     /* Darker Grey */
     --foreground: 210 20% 98%;
     --card: 0 0% 12%;
@@ -94,7 +94,8 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: var(--font-cairo), "Cairo", var(--font-inter), "Inter", sans-serif;
+    font-family: var(--font-cairo), "Cairo", var(--font-inter), "Inter",
+      sans-serif;
     font-size: 1rem;
     /* 18px */
     line-height: 1.6;
@@ -114,22 +115,10 @@
 
 @layer utilities {
   .animated-grid-background {
-    background-color: hsl(var(--background));
-    background-image:
-      linear-gradient(to right, hsl(var(--border)) 1px, transparent 1px),
-      linear-gradient(to bottom, hsl(var(--border)) 1px, transparent 1px);
-    background-size: 4rem 4rem;
-    animation: 20s linear 0s infinite normal none running move;
-  }
-
-  @keyframes move {
-    from {
-      background-position: 0px 0px;
-    }
-
-    to {
-      background-position: -128px 0px;
-    }
+    background: rgba(22, 26, 25, 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    min-height: 100vh;
   }
 }
 
@@ -159,22 +148,54 @@ textarea.auto-expand::-webkit-scrollbar {
   height: 0;
 }
 
-
-/* Scrollbar Styling */
+/* Scrollbar Styling - Updated to match User Design */
 ::-webkit-scrollbar {
-  width: 10px;         /* عرض السكروول */
-  height: 10px;        /* للسكروول الأفقي */
+  width: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent; /* خلفية المسار */
+  background: #0b0f0e;
 }
 
 ::-webkit-scrollbar-thumb {
-  background-color: var(--primary);   /* ← لون PRIMARY الأخضر */
-  border-radius: 10px;
+  background: #161a19;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: #2eaa4c;   /* لون أغمق عند المرور */
+  background: #32cd32;
+}
+
+/* Custom Design Utilities */
+.glass-panel {
+  background: rgba(22, 26, 25, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glow-text {
+  text-shadow: 0 0 20px rgba(50, 205, 50, 0.3);
+}
+
+/* إزالة الخلفية البيضاء من autocomplete في textarea و input */
+textarea:-webkit-autofill,
+textarea:-webkit-autofill:hover,
+textarea:-webkit-autofill:focus,
+textarea:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
+  -webkit-text-fill-color: white !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
+  -webkit-text-fill-color: white !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  transition: background-color 5000s ease-in-out 0s;
 }

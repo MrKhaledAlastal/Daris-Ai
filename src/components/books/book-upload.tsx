@@ -88,9 +88,8 @@ export default function BookUpload({
         toast({
           variant: "destructive",
           title: lang === "ar" ? "حجم الملف كبير جداً" : "File Too Large",
-          description: `${file.name} ${
-            lang === "ar" ? "يتجاوز 50 ميغابايت" : "exceeds 50MB"
-          }`,
+          description: `${file.name} ${lang === "ar" ? "يتجاوز 50 ميغابايت" : "exceeds 50MB"
+            }`,
         });
         hasError = true;
         return;
@@ -103,9 +102,8 @@ export default function BookUpload({
         toast({
           variant: "destructive",
           title: lang === "ar" ? "ملف مكرر" : "Duplicate File",
-          description: `${file.name} ${
-            lang === "ar" ? "موجود مسبقاً" : "already added"
-          }`,
+          description: `${file.name} ${lang === "ar" ? "موجود مسبقاً" : "already added"
+            }`,
         });
         hasError = true;
         return;
@@ -153,29 +151,65 @@ export default function BookUpload({
           }
         });
 
-        xhr.addEventListener("load", () => {
+        xhr.addEventListener("load", async () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             setUploadProgress((prev) => ({ ...prev, [key]: 100 }));
 
             // ✨ Auto-Analyze
+            // ✨ Auto-Analyze with better error handling
             try {
               const response = JSON.parse(xhr.responseText);
               if (response.book?.id) {
-                fetch("/api/admin/process-book", {
+                console.log("🔄 Triggering auto-analysis for book:", response.book.id);
+
+                const analyzeResponse = await fetch("/api/admin/process-book", {
                   method: "POST",
+                  headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
                     bookId: response.book.id,
                     storagePath: response.book.storage_path,
                   }),
-                }).catch((err) =>
-                  console.error("Auto-analysis trigger failed:", err)
-                );
+                });
+
+                if (!analyzeResponse.ok) {
+                  const errorData = await analyzeResponse.json();
+                  console.error("❌ Auto-analysis failed:", errorData);
+
+                  toast({
+                    variant: "destructive",
+                    title: lang === "ar" ? "⚠️ فشل التحليل التلقائي" : "⚠️ Auto-analysis failed",
+                    description: errorData.error || "Unknown error",
+                  });
+                } else {
+                  const result = await analyzeResponse.json();
+                  console.log("✅ Auto-analysis completed:", result);
+
+                  if (result.success) {
+                    toast({
+                      title: lang === "ar" ? "✅ تم التحليل بنجاح" : "✅ Analysis complete",
+                      description: lang === "ar"
+                        ? `تم معالجة ${result.processedPages}/${result.totalPages} صفحة`
+                        : `Processed ${result.processedPages}/${result.totalPages} pages`,
+                    });
+                  } else if (result.errors) {
+                    toast({
+                      variant: "destructive",
+                      title: lang === "ar" ? "⚠️ تحليل جزئي" : "⚠️ Partial analysis",
+                      description: lang === "ar"
+                        ? `تم معالجة ${result.processedPages}/${result.totalPages} صفحة فقط`
+                        : `Only ${result.processedPages}/${result.totalPages} pages processed`,
+                    });
+                  }
+                }
               }
             } catch (e) {
-              console.error(
-                "Failed to parse upload response for auto-analysis:",
-                e
-              );
+              console.error("❌ Auto-analysis trigger error:", e);
+
+              toast({
+                variant: "destructive",
+                title: lang === "ar" ? "خطأ في التحليل" : "Analysis error",
+                description: String(e),
+              });
             }
 
             resolve();
@@ -215,9 +249,8 @@ export default function BookUpload({
         toast({
           variant: "destructive",
           title: lang === "ar" ? "فشل الرفع" : "Upload Failed",
-          description: `${file.name}: ${
-            err instanceof Error ? err.message : "Unknown error"
-          }`,
+          description: `${file.name}: ${err instanceof Error ? err.message : "Unknown error"
+            }`,
         });
       }
     }
@@ -231,12 +264,10 @@ export default function BookUpload({
         title: lang === "ar" ? "✅ تم الرفع بنجاح" : "✅ Upload Successful",
         description:
           lang === "ar"
-            ? `تم رفع ${success} ملف بنجاح${
-                failed > 0 ? ` وفشل ${failed}` : ""
-              }`
-            : `${success} file(s) uploaded${
-                failed > 0 ? `, ${failed} failed` : ""
-              }`,
+            ? `تم رفع ${success} ملف بنجاح${failed > 0 ? ` وفشل ${failed}` : ""
+            }`
+            : `${success} file(s) uploaded${failed > 0 ? `, ${failed} failed` : ""
+            }`,
       });
       onUploadSuccess?.();
       setDialogOpen(false);
@@ -320,18 +351,16 @@ export default function BookUpload({
           <div
             {...getRootProps()}
             className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
-              ${
-                isDragActive
-                  ? "border-primary bg-primary/10"
-                  : "border-border hover:border-primary/50 hover:bg-accent/50"
+              ${isDragActive
+                ? "border-primary bg-primary/10"
+                : "border-border hover:border-primary/50 hover:bg-accent/50"
               }
               ${isUploading ? "pointer-events-none opacity-50" : ""}`}
           >
             <input {...getInputProps()} disabled={isUploading} />
             <FileUp
-              className={`h-12 w-12 mx-auto ${
-                isDragActive ? "text-primary" : "text-muted-foreground"
-              }`}
+              className={`h-12 w-12 mx-auto ${isDragActive ? "text-primary" : "text-muted-foreground"
+                }`}
             />
             <p className="mt-3 text-sm font-medium">
               {isDragActive
@@ -339,8 +368,8 @@ export default function BookUpload({
                   ? "أفلت الملفات هنا..."
                   : "Drop files here..."
                 : lang === "ar"
-                ? "اسحب الملفات أو اضغط للاختيار"
-                : "Drag files or click to select"}
+                  ? "اسحب الملفات أو اضغط للاختيار"
+                  : "Drag files or click to select"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               PDF, DOCX, PPTX, TXT

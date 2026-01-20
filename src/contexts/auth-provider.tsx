@@ -23,6 +23,8 @@ interface AuthContextType {
   isAdmin: boolean;
   displayName: string | null;
   refetchProfile: (userId: string) => Promise<void>;
+  loginAsDeveloper: () => void;
+  logout: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextType>({
@@ -34,6 +36,8 @@ export const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   displayName: null,
   refetchProfile: async () => {},
+  loginAsDeveloper: () => {},
+  logout: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -45,15 +49,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [branch, setBranch] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
 
+  const loginAsDeveloper = () => {
+    const devUser: User = {
+      id: "dev-user-id",
+      app_metadata: {},
+      user_metadata: {},
+      aud: "authenticated",
+      created_at: new Date().toISOString(),
+      email: "developer@example.com",
+    } as User;
+
+    setUser(devUser);
+    setRole("admin");
+    setBranch("scientific");
+    setDisplayName("Developer");
+    setLoading(false);
+    setProfileLoading(false);
+    
+    // Store flag in localStorage to persist dev session
+    localStorage.setItem("isDevSession", "true");
+  };
+
+  const logout = async () => {
+    try {
+      // Clear dev session
+      localStorage.removeItem("isDevSession");
+      
+      // Clear local state
+      setUser(null);
+      setRole(null);
+      setBranch(null);
+      setDisplayName(null);
+      
+      // Sign out from Supabase
+      const { signOut } = await import("@/lib/supabase-auth");
+      await signOut();
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
+
   // ----------------------------
   //     refetchProfile()
   // ----------------------------
   const refetchProfile = useCallback(async (userId: string) => {
+    // Skip if dev user
+    if (userId === "dev-user-id") return;
+
     try {
       console.log("🔄 [AUTH] Re-fetching profile...");
 
       const { data, error } = await supabase
-        .from("users")
+        .from("profiles")
         .select("role, branch, display_name")
         .eq("id", userId)
         .single();
@@ -78,6 +125,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   //    Listen to Auth Changes
   // ----------------------------
   useEffect(() => {
+    // Check for dev session
+    if (localStorage.getItem("isDevSession") === "true") {
+       loginAsDeveloper();
+       return;
+    }
+
     const unsubscribe = onAuthStateChange(async (authUser) => {
       setUser(authUser);
 
@@ -112,13 +165,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      // Skip fetching for dev user as we set it manually
+      if (user.id === "dev-user-id") {
+        setProfileLoading(false);
+        return;
+      }
+
       setProfileLoading(true);
 
       try {
         console.log("🔵 [AUTH] Fetching profile:", user.id);
 
         const { data, error } = await supabase
-          .from("users")
+          .from("profiles")
           .select("role, branch, display_name")
           .eq("id", user.id)
           .single();
@@ -126,7 +185,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!active) return;
 
         if (error?.code === "PGRST116") {
-          console.log("🟡 [AUTH] User not found yet in users table");
+          console.log("🟡 [AUTH] User not found yet in profiles table");
           setRole(null);
           setBranch(null);
           setDisplayName(null);
@@ -176,6 +235,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAdmin: role === "admin",
       displayName,
       refetchProfile,
+      loginAsDeveloper,
+      logout,
     }),
     [user, combinedLoading, role, branch, displayName, refetchProfile]
   );

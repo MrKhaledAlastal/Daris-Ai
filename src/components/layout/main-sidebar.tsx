@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useDeferredValue } from "react";
 import Image from "next/image";
-import { signOut } from "@/lib/supabase-auth";
 import { supabase } from "@/lib/supabase";
 import { useTheme } from "next-themes";
 import { useLanguage } from "@/hooks/use-language";
@@ -97,7 +96,7 @@ const LANGUAGE_OPTIONS = [
 export default function MainSidebar() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, isLoggedIn, branch, displayName } = useAuth();
+  const { user, isLoggedIn, branch, displayName, logout } = useAuth();
   const { isAdmin } = useAdmin();
   const { lang, setLanguage } = useLanguage();
   const isMobile = useIsMobile();
@@ -113,6 +112,7 @@ export default function MainSidebar() {
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [tempTitle, setTempTitle] = useState("");
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
 
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const activeChatId = searchParams.get("chatId");
@@ -191,10 +191,10 @@ export default function MainSidebar() {
               prev.map((c) =>
                 c.id === updatedChat.id
                   ? {
-                    ...c,
-                    title: updatedChat.title || c.title,
-                    lastMessagePreview: updatedChat.last_message_preview,
-                  }
+                      ...c,
+                      title: updatedChat.title || c.title,
+                      lastMessagePreview: updatedChat.last_message_preview,
+                    }
                   : c
               )
             );
@@ -247,21 +247,30 @@ export default function MainSidebar() {
         prev.map((c) =>
           c.id === id
             ? {
-              ...c,
-              title: title || c.title,
-              lastMessagePreview: lastMessagePreview || c.lastMessagePreview,
-            }
+                ...c,
+                title: title || c.title,
+                lastMessagePreview: lastMessagePreview || c.lastMessagePreview,
+              }
             : c
         )
       );
     };
 
     window.addEventListener("newChatCreated", handleNewChat as EventListener);
-    window.addEventListener("chatTitleUpdated", handleTitleUpdate as EventListener);
+    window.addEventListener(
+      "chatTitleUpdated",
+      handleTitleUpdate as EventListener
+    );
 
     return () => {
-      window.removeEventListener("newChatCreated", handleNewChat as EventListener);
-      window.removeEventListener("chatTitleUpdated", handleTitleUpdate as EventListener);
+      window.removeEventListener(
+        "newChatCreated",
+        handleNewChat as EventListener
+      );
+      window.removeEventListener(
+        "chatTitleUpdated",
+        handleTitleUpdate as EventListener
+      );
     };
   }, []);
 
@@ -327,7 +336,7 @@ export default function MainSidebar() {
       if (!user?.id) return;
       try {
         const { error } = await supabase
-          .from("users")
+          .from("profiles")
           .update({ branch: newBranch })
           .eq("id", user.id);
 
@@ -389,14 +398,11 @@ export default function MainSidebar() {
         lastMessagePreview: "",
       };
 
-      setChats((prev) => {
-        // Check if already exists
-        const exists = prev.some((c) => c.id === chatId);
-        if (exists) return prev;
-        return [newChat, ...prev];
-      });
+      setChats((prev) => [...prev, newChat]);
 
+      // Navigate to the new chat and show welcome screen
       router.push(`/chat?chatId=${chatId}`);
+      setShowWelcome(true);
     } catch (error) {
       console.error("Error creating chat:", error);
       toast({
@@ -475,12 +481,12 @@ export default function MainSidebar() {
 
   const handleLogout = useCallback(async () => {
     try {
-      await signOut();
+      await logout();
       router.push("/login");
     } catch (error) {
       console.error("Error logging out:", error);
     }
-  }, [router]);
+  }, [router, logout]);
 
   return (
     <>
@@ -510,7 +516,7 @@ export default function MainSidebar() {
       <aside
         aria-label="Sidebar"
         className={cn(
-          "relative h-[100dvh] md:h-screen shrink-0 border-r border-border bg-background flex flex-col shadow-[0_20px_80px_rgba(0,0,0,0.35)]",
+          "relative h-[100dvh] md:h-screen shrink-0 border-r border-white/5 bg-surface-dark/80 backdrop-blur-xl flex flex-col shadow-[0_20px_80px_rgba(0,0,0,0.5)]",
           "fixed inset-y-0 left-0 z-50 transition-transform duration-300 md:sticky md:top-0 md:flex md:translate-x-0",
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         )}
@@ -753,6 +759,7 @@ export default function MainSidebar() {
                     </div>
                   </div>
 
+                  {/* 🔒 Theme toggle hidden - keeping code for future use
                   <div className="space-y-2">
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">
                       {t.theme}
@@ -770,6 +777,7 @@ export default function MainSidebar() {
                       ))}
                     </div>
                   </div>
+                  */}
 
                   <div className="space-y-2">
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -805,7 +813,7 @@ export default function MainSidebar() {
               className={cn(
                 "w-full rounded-2xl border border-border/60 bg-background py-2.5 text-sm font-medium text-foreground hover:bg-accent/10 transition-all",
                 isCollapsed &&
-                "w-full h-10 flex items-center justify-center p-0"
+                  "w-full h-10 flex items-center justify-center p-0"
               )}
             >
               {isCollapsed ? "→" : t.login}
@@ -910,7 +918,7 @@ function RecentChatButton({
               "truncate text-sm whitespace-nowrap flex-1 text-left transition-all duration-150",
               "group-hover:[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]",
               active &&
-              "[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]"
+                "[mask-image:linear-gradient(to_right,black_78%,transparent_95%)]"
             )}
           >
             {title}

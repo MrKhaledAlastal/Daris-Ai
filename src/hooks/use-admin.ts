@@ -11,7 +11,7 @@ export function useAdmin() {
             if (user?.id) {
                 try {
                     const { data, error } = await supabase
-                        .from('users')
+                        .from('profiles')
                         .select('role')
                         .eq('id', user.id)
                         .single();

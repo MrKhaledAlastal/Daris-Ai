@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect, useTransition } from "react";
+import React, { useState, useRef, useEffect, useTransition, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   Loader2,
   Paperclip,
@@ -15,11 +16,9 @@ import {
   Brain,
   Target,
   Lightbulb,
+  ExternalLink,
+  Search,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 
 import {
@@ -37,8 +36,22 @@ import { compressDataUrl } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { askQuestionAction } from "@/app/actions";
+import { renderMessage } from "@/lib/renderMessage";
+import {
+  INTENT_MESSAGE_DELAY_MS,
+  IntentChunk,
+  IntentType,
+  splitResponseIntoIntents,
+} from "@/lib/intent-utils";
 import { Logo } from "../icons/logo";
 
 // =========================================================
@@ -54,55 +67,59 @@ export interface Message {
   source?: string;
   sourceBookName?: string;
   sourcePageNumber?: number;
+  downloadUrl?: string; // 🆕 رابط الملف من Supabase
+  bookId?: string;
   lang?: "ar" | "en";
+  sources?: Array<{
+    // 🆕 مصادر متعددة (كتاب + إنترنت)
+    title: string;
+    pageNumber?: number | null;
+    bookId?: string | null;
+    downloadUrl?: string | null;
+    isWebSource?: boolean;
+  }>;
+  intentType?: IntentType;
 }
 
-// =========================================================
-// Typing Effect Function with Abort Support
-// =========================================================
-function typeEffect(
-  text: string,
-  onUpdate: (displayedText: string) => void,
-  speed: number = 8,
-  abortSignal?: AbortSignal
-): Promise<void> {
-  return new Promise((resolve) => {
-    let i = 0;
-    const interval = setInterval(() => {
-      if (abortSignal?.aborted) {
-        clearInterval(interval);
-        resolve();
-        return;
-      }
-      i++;
-      onUpdate(text.slice(0, i));
+type AssistantMeta = Pick<
+  Message,
+  | "lang"
+  | "sources"
+  | "sourceBookName"
+  | "sourcePageNumber"
+  | "downloadUrl"
+  | "bookId"
+  | "source"
+>;
 
-      if (i >= text.length) {
-        clearInterval(interval);
-        resolve();
-      }
-    }, speed);
+const wait = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-    if (abortSignal) {
-      abortSignal.addEventListener("abort", () => {
-        clearInterval(interval);
-        resolve();
-      });
-    }
-  });
-}
+const typeEffect = async (
+  fullText: string,
+  onUpdate: (text: string) => void,
+  delayMs = 20
+) => {
+  if (!fullText) {
+    onUpdate("");
+    return;
+  }
+
+  let current = "";
+  for (const char of fullText) {
+    current += char;
+    onUpdate(current);
+    await wait(delayMs);
+  }
+};
 
 // =========================================================
 // Main Chat Component
 // =========================================================
 export default function ChatInterface() {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [streamText, setStreamText] = useState("");
-  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(
-    null
-  );
-  const [userScrolled, setUserScrolled] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [profilescrolled, setprofilescrolled] = useState(false);
+  const [scrollProgress, setScrollProgress] = useState(0);
 
   const [input, setInput] = useState("");
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
@@ -113,15 +130,26 @@ export default function ChatInterface() {
   } | null>(null);
 
   const [expandSearch, setExpandSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [availableBooks, setAvailableBooks] = useState<
+    Array<{ id: string; file_name: string; branch?: string }>
+  >([]);
+  const [selectedBookId, setSelectedBookId] = useState<string | undefined>(
+    undefined
+  );
+  const [loadingBooks, setLoadingBooks] = useState(false);
 
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isAssistantTyping, setIsAssistantTyping] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
   const [welcomeExit, setWelcomeExit] = useState(false);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(
+    null
+  );
+  const [isStreaming, setIsStreaming] = useState(false);
 
   const [isPending, startTransition] = useTransition();
-  const abortControllerRef = useRef<AbortController | null>(null);
 
   const { state: sidebarState } = useSidebar();
   const { t, lang } = useLanguage();
@@ -137,6 +165,9 @@ export default function ChatInterface() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const playbackChainRef = useRef<Promise<void>>(Promise.resolve());
+  const activeSequencesRef = useRef(0);
 
   const isArabic = lang === "ar";
   const displayName =
@@ -157,6 +188,67 @@ export default function ChatInterface() {
       { text: "Solve a 3D geometry problem", category: "Math" },
       { text: "Draft a weekly study plan", category: "Planning" },
     ];
+
+  // =========================================================
+  // Handle Opening Source PDF at Specific Page from Supabase
+  // =========================================================
+  const handleOpenSource = (downloadUrl: string, pageNumber?: number) => {
+    if (!downloadUrl) return;
+
+    // إضافة رقم الصفحة للرابط المباشر
+    const finalUrl = pageNumber
+      ? `${downloadUrl}#page=${pageNumber}`
+      : downloadUrl;
+
+    console.log("🔗 Opening PDF at:", finalUrl);
+    window.open(finalUrl, "_blank");
+  };
+
+  // =========================================================
+  // 🔥 Helper: Get Favicon URL from Website URL (محسّن)
+  // =========================================================
+  const getFaviconUrl = (url: string): string => {
+    if (!url) return "";
+
+    try {
+      // تنظيف URL وإزالة أي مسافات
+      const cleanUrl = url.trim();
+
+      // إضافة https:// إذا لم يكن موجوداً
+      const fullUrl = cleanUrl.startsWith("http")
+        ? cleanUrl
+        : `https://${cleanUrl}`;
+
+      // استخراج domain من URL
+      const urlObj = new URL(fullUrl);
+      const domain = urlObj.hostname.replace("www.", "");
+
+      // استخدام Google's favicon service (أسرع وأكثر موثوقية)
+      // sz=64 للحصول على جودة أعلى
+      return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+    } catch (e) {
+      // إذا فشل parsing، نحاول استخراج domain يدوياً
+      const domain = url
+        .replace(/^https?:\/\//, "")
+        .replace(/^www\./, "")
+        .split("/")[0];
+      return `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+    }
+  };
+
+  // =========================================================
+  // 🔥 Helper: Extract Domain Name from URL
+  // =========================================================
+  const getDomainName = (url: string): string => {
+    if (!url) return "";
+
+    try {
+      const urlObj = new URL(url.startsWith("http") ? url : `https://${url}`);
+      return urlObj.hostname.replace("www.", "");
+    } catch (e) {
+      return url;
+    }
+  };
 
   const highlightCards = isArabic
     ? [
@@ -204,94 +296,127 @@ export default function ChatInterface() {
       },
     ];
 
+  const INTENT_LABELS: Record<IntentType, { ar: string; en: string }> = {
+    concept: { ar: "مفهوم أساسي", en: "Concept" },
+    example: { ar: "مثال توضيحي", en: "Example" },
+    formula: { ar: "قانون", en: "Formula" },
+    calculation: { ar: "خطوات الحل", en: "Calculation" },
+    result: { ar: "النتيجة", en: "Result" },
+    followup: { ar: "سؤال متابعة", en: "Follow-up" },
+  };
+
+  const INTENT_BADGE_CLASSES: Record<IntentType, string> = {
+    concept: "bg-emerald-500/15 text-emerald-200 border border-emerald-400/25",
+    example: "bg-teal-500/15 text-teal-200 border border-teal-400/25",
+    formula: "bg-lime-500/15 text-lime-200 border border-lime-400/25",
+    calculation: "bg-sky-500/15 text-sky-200 border border-sky-400/20",
+    result: "bg-emerald-400/20 text-emerald-100 border border-emerald-300/30",
+    followup: "bg-amber-500/15 text-amber-200 border border-amber-400/25",
+  };
+
+  const INTENT_PANEL_CLASSES: Record<IntentType | "default", string> = {
+    concept:
+      "bg-gradient-to-br from-emerald-500/12 via-white/5 to-emerald-500/4 border border-emerald-400/15",
+    example:
+      "bg-gradient-to-br from-teal-500/12 via-white/5 to-teal-500/4 border border-teal-400/15",
+    formula:
+      "bg-gradient-to-br from-lime-400/12 via-white/5 to-lime-500/5 border border-lime-400/15",
+    calculation:
+      "bg-gradient-to-br from-sky-500/14 via-white/5 to-sky-500/4 border border-sky-400/15",
+    result:
+      "bg-gradient-to-br from-emerald-400/14 via-white/5 to-emerald-500/6 border border-emerald-300/20",
+    followup:
+      "bg-gradient-to-br from-amber-500/14 via-white/5 to-amber-400/6 border border-amber-400/15",
+    default:
+      "bg-white/20/[0.15] border border-white/10",
+  };
+
+  const getIntentLabel = (type: IntentType | undefined, lang: "ar" | "en") => {
+    if (!type) return null;
+    const map = INTENT_LABELS[type];
+    return lang === "ar" ? map.ar : map.en;
+  };
+
   // =========================================================
   // Helper: Render Markdown content
   // =========================================================
   const renderAssistantContent = (content: string) => {
     if (!content) return null;
 
-    return (
-      <div className="prose prose-sm dark:prose-invert max-w-none">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm, remarkMath]}
-          rehypePlugins={[rehypeKatex]}
-          components={{
-            h2: ({ node, ...props }) => (
-              <h2
-                className="text-xl md:text-2xl font-bold mt-6 mb-4 text-foreground flex items-center gap-2"
-                {...props}
-              />
-            ),
-            h3: ({ node, ...props }) => (
-              <h3
-                className="text-lg md:text-xl font-semibold mt-5 mb-3 text-foreground/90"
-                {...props}
-              />
-            ),
-            p: ({ node, ...props }) => (
-              <p
-                className="text-[15px] md:text-[16px] leading-7 text-foreground/85 mb-3"
-                {...props}
-              />
-            ),
-            ul: ({ node, ...props }) => (
-              <ul
-                className="list-disc list-inside space-y-2 mb-4 text-[15px] text-foreground/85"
-                {...props}
-              />
-            ),
-            li: ({ node, ...props }) => (
-              <li className="ml-2 leading-6" {...props} />
-            ),
-            code: ({ node, inline, className, ...props }: any) =>
-              inline ? (
-                <code
-                  className="bg-background/80 px-2 py-1 rounded text-primary font-mono text-sm"
-                  {...props}
-                />
-              ) : (
-                <code
-                  className="block bg-background/60 p-4 rounded-lg border border-border/40 overflow-x-auto text-sm font-mono my-4 text-foreground/90"
-                  {...props}
-                />
-              ),
-            blockquote: ({ node, ...props }) => (
-              <blockquote
-                className="border-l-4 border-primary/50 pl-4 py-2 italic text-foreground/70 my-4"
-                {...props}
-              />
-            ),
-            strong: ({ node, ...props }) => (
-              <strong className="font-bold text-foreground" {...props} />
-            ),
-            em: ({ node, ...props }) => (
-              <em className="italic text-foreground/90" {...props} />
-            ),
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-      </div>
-    );
+    let cleanContent = content.replace(/\[METADATA:.*?\]/g, "").trim();
+    cleanContent = cleanContent.replace(/\*\*/g, "").trim();
+
+    return renderMessage(cleanContent);
   };
 
+  const enqueueIntentPlayback = useCallback(
+    (chunks: IntentChunk[], meta: AssistantMeta) => {
+      if (!chunks.length) return;
+
+      const baseId = `ai-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 6)}`;
+
+      playbackChainRef.current = playbackChainRef.current.then(async () => {
+        activeSequencesRef.current += 1;
+        setIsAssistantTyping(true);
+
+        try {
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            await wait(INTENT_MESSAGE_DELAY_MS);
+
+            const message: Message = {
+              id: `${baseId}-${i}`,
+              role: "assistant",
+              content: chunk.content,
+              intentType: chunk.type,
+              ...meta,
+            };
+
+            setMessages((prev) => [...prev, message]);
+          }
+        } finally {
+          activeSequencesRef.current -= 1;
+          if (activeSequencesRef.current === 0) {
+            setIsAssistantTyping(false);
+          }
+        }
+      });
+    },
+    [setIsAssistantTyping]
+  );
+
   // =========================================================
-  // Stop Streaming
-  // =========================================================
-  const handleStopStreaming = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    setIsStreaming(false);
-    setStreamingMessageId(null);
-    setStreamText("");
-    setIsAssistantTyping(false);
-    toast({
-      title: lang === "ar" ? "تم الإيقاف" : "Stopped",
-      description:
-        lang === "ar" ? "تم إيقاف الرد الحالي" : "Response has been stopped",
-    });
-  };
+  // Skeleton cards shown while assistant types (RTL-aware)
+  function SkeletonCards({
+    count = 2,
+    rtl = false,
+  }: {
+    count?: number;
+    rtl?: boolean;
+  }) {
+    return (
+      <div
+        className={`flex flex-col gap-3 my-4 animate-fade-up`}
+        dir={rtl ? "rtl" : "ltr"}
+      >
+        {Array.from({ length: count }).map((_, i) => (
+          <div
+            key={i}
+            className={`flex items-center gap-3 bg-white/[0.04] p-4 rounded-xl border border-white/5 transition-all animate-pulse ${rtl ? "flex-row-reverse" : "flex-row"
+              }`}
+          >
+            <div className="w-3 h-3 rounded-full bg-[#32CD32] shadow-[0_0_8px_#32CD32] shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="h-3 w-40 bg-white/10 rounded" />
+              <div className="h-3 w-24 bg-white/8 rounded" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   // =========================================================
   // Handle initial chatId
@@ -305,6 +430,43 @@ export default function ChatInterface() {
     setShowWelcome(true);
     setWelcomeExit(false);
   }, [currentChatId]);
+
+  // =========================================================
+  // 📚 Fetch Available Books for Branch
+  // =========================================================
+  useEffect(() => {
+    if (!branch || !user) {
+      setAvailableBooks([]);
+      setSelectedBookId(undefined);
+      return;
+    }
+
+    const fetchBooks = async () => {
+      setLoadingBooks(true);
+      try {
+        const { data, error } = await supabase
+          .from("books")
+          .select("id, file_name, branch")
+          .eq("branch", branch)
+          .eq("status", "analyzed") // فقط الكتب المعالجة
+          .order("file_name", { ascending: true });
+
+        if (error) {
+          console.error("Error fetching books:", error);
+          setAvailableBooks([]);
+        } else {
+          setAvailableBooks(data || []);
+        }
+      } catch (err) {
+        console.error("Error fetching books:", err);
+        setAvailableBooks([]);
+      } finally {
+        setLoadingBooks(false);
+      }
+    };
+
+    fetchBooks();
+  }, [branch, user]);
 
   // 🔥 FIX: Use ref to track previous messages count and avoid dependency loop
   const prevMessagesCountRef = useRef(0);
@@ -359,6 +521,143 @@ export default function ChatInterface() {
   });
 
   // =========================================================
+  // UI Helper: Message Bubble (New Glass Design)
+  // =========================================================
+  const MessageBubble = ({ m }: { m: Message }) => {
+    const isAssistant = m.role === "assistant";
+    const dir = isArabic ? "rtl" : "ltr"; // Use component state 'isArabic'
+
+    if (isAssistant) {
+      return (
+        <div className="flex items-start gap-4 justify-start w-full group">
+          {/* Avatar */}
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-new to-primary-dark flex items-center justify-center shrink-0 shadow-[0_0_10px_rgba(50,205,50,0.3)] mt-1">
+            <Sparkles className="text-white w-[18px] h-[18px]" />
+          </div>
+
+          <div className="flex flex-col gap-3 max-w-[75%] md:max-w-[70%]">
+            {/* Name & Badge */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-white">
+                {lang === "ar" ? "المساعد الذكي" : "AI Assistant"}
+              </span>
+              <span className="px-1.5 py-0.5 rounded bg-primary-new/10 text-primary-new text-[10px] font-bold border border-primary-new/20">
+                AI
+              </span>
+            </div>
+
+            {/* Content */}
+            <div className="bg-surface-dark/80 border border-white/10 rounded-2xl px-4 py-3 md:px-5 md:py-4 text-[15px] leading-relaxed space-y-4">
+              {renderAssistantContent(m.content || "")}
+            </div>
+
+            {/* Sources & Attachments */}
+            <div className="flex flex-wrap gap-2 mt-2">
+              {m.sourceBookName && (
+                <button
+                  onClick={() =>
+                    handleOpenSource(
+                      m.downloadUrl || `/my-books?bookId=${m.bookId}`,
+                      m.sourcePageNumber
+                    )
+                  }
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-dark border border-white/10 hover:border-primary-new/50 hover:bg-primary-new/5 transition-all group"
+                >
+                  <BookOpen className="text-primary-new w-[16px] h-[16px]" />
+                  <span className="text-xs font-medium text-white/80 group-hover:text-white">
+                    {m.sourceBookName}{" "}
+                    {m.sourcePageNumber ? `p.${m.sourcePageNumber}` : ""}
+                  </span>
+                </button>
+              )}
+              {m.fileUrl && (
+                <a
+                  href={m.fileUrl}
+                  download={m.fileName}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-dark border border-white/10 hover:border-primary-new/50 hover:bg-primary-new/5 transition-all group"
+                >
+                  <FileText className="text-primary-new w-[16px] h-[16px]" />
+                  <span className="text-xs font-medium text-white/80 group-hover:text-white">
+                    {m.fileName || "File"}
+                  </span>
+                </a>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-4 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(m.content || "");
+                  setCopiedId(m.id);
+                  setTimeout(() => setCopiedId(null), 1600);
+                }}
+                className="text-white/40 hover:text-white transition-colors"
+                title={lang === "ar" ? "نسخ" : "Copy"}
+              >
+                {copiedId === m.id ? (
+                  <Check className="w-[18px] h-[18px] text-primary-new" />
+                ) : (
+                  <Copy className="w-[18px] h-[18px]" />
+                )}
+              </button>
+              {/* Regenerate - Placeholder for now as logic wasn't in original snippet */}
+              {/* <button className="text-white/40 hover:text-white transition-colors">
+                <RefreshCw className="w-[18px] h-[18px]" />
+              </button> */}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // User Message
+    return (
+      <div className="flex items-end gap-4 justify-end group">
+        <div className="flex flex-col gap-1 items-end max-w-[80%]">
+          <div className="bg-primary-new text-slate-900 px-5 py-3.5 rounded-2xl rounded-bl-none shadow-lg shadow-primary-new/10">
+            <div className="text-[15px] font-bold leading-relaxed whitespace-pre-wrap">
+              {m.content}
+            </div>
+            {m.imageBase64 && (
+              <img
+                src={m.imageBase64}
+                alt="Upload"
+                className="mt-2 rounded-lg max-w-full opacity-90 hover:opacity-100 transition-opacity"
+              />
+            )}
+            {m.fileName && (
+              <div className="mt-2 text-xs flex items-center gap-1 bg-black/10 px-2 py-1 rounded">
+                <Paperclip className="w-3 h-3" />
+                {m.fileName}
+              </div>
+            )}
+          </div>
+          {/* Read Receipt (Static for now, but part of design) */}
+          <span className="text-[11px] text-white/30 mr-1 opacity-100">
+            {/* Could add timestamp here if available in message object */}
+          </span>
+        </div>
+
+        {/* User Avatar */}
+        <div className="w-9 h-9 rounded-full bg-surface-darker ring-2 ring-surface-darker shrink-0 flex items-center justify-center overflow-hidden">
+          {user?.user_metadata?.avatar_url ? (
+            <img
+              src={user.user_metadata.avatar_url}
+              alt="Avatar"
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <span className="text-white/50 text-xs font-bold">
+              {displayName?.charAt(0).toUpperCase()}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // =========================================================
   // 🔥 IMPROVED: Messages Listener with smart deduplication
   // =========================================================
   useEffect(() => {
@@ -377,9 +676,34 @@ export default function ChatInterface() {
 
         if (existingMessages) {
           console.log("✅ تم تحميل", existingMessages.length, "رسائل");
-          const arr = existingMessages.map(
-            (d: any) =>
-            ({
+          const arr = existingMessages.map((d: any) => {
+            // 🔥 محاولة parse sources من JSON إذا كان موجوداً
+            let sources: any[] = [];
+            if (d.sources) {
+              try {
+                sources =
+                  typeof d.sources === "string"
+                    ? JSON.parse(d.sources)
+                    : d.sources;
+              } catch (e) {
+                console.warn("Failed to parse sources:", e);
+              }
+            }
+
+            // إذا لم يكن هناك sources array، نستخدم المصدر القديم للتوافق
+            if (sources.length === 0 && d.source_book_name) {
+              sources = [
+                {
+                  title: d.source_book_name,
+                  pageNumber: d.source_page_number || 1,
+                  bookId: d.book_id || null,
+                  downloadUrl: d.download_url || null,
+                  isWebSource: false,
+                },
+              ];
+            }
+
+            return {
               id: d.id,
               role: d.role,
               content: d.content,
@@ -389,9 +713,12 @@ export default function ChatInterface() {
               source: d.source,
               sourceBookName: d.source_book_name,
               sourcePageNumber: d.source_page_number,
+              downloadUrl: d.download_url,
+              bookId: d.book_id || null,
+              sources: sources.length > 0 ? sources : undefined, // 🆕 sources array
               lang: d.lang,
-            } as Message)
-          );
+            } as Message;
+          });
           setMessages(arr);
         }
       } catch (error) {
@@ -423,6 +750,32 @@ export default function ChatInterface() {
               return prev;
             }
 
+            // 🔥 محاولة parse sources من JSON إذا كان موجوداً
+            let sources: any[] = [];
+            if (newMessage.sources) {
+              try {
+                sources =
+                  typeof newMessage.sources === "string"
+                    ? JSON.parse(newMessage.sources)
+                    : newMessage.sources;
+              } catch (e) {
+                console.warn("Failed to parse sources:", e);
+              }
+            }
+
+            // إذا لم يكن هناك sources array، نستخدم المصدر القديم للتوافق
+            if (sources.length === 0 && newMessage.source_book_name) {
+              sources = [
+                {
+                  title: newMessage.source_book_name,
+                  pageNumber: newMessage.source_page_number || 1,
+                  bookId: newMessage.book_id || null,
+                  downloadUrl: newMessage.download_url || null,
+                  isWebSource: false,
+                },
+              ];
+            }
+
             const message: Message = {
               id: newMessage.id,
               role: newMessage.role,
@@ -433,6 +786,9 @@ export default function ChatInterface() {
               source: newMessage.source,
               sourceBookName: newMessage.source_book_name,
               sourcePageNumber: newMessage.source_page_number,
+              downloadUrl: newMessage.download_url,
+              bookId: newMessage.book_id || null,
+              sources: sources.length > 0 ? sources : undefined, // 🆕 sources array
               lang: newMessage.lang,
             };
 
@@ -442,6 +798,33 @@ export default function ChatInterface() {
         } else if (payload.eventType === "UPDATE") {
           const updatedMessage = payload.new;
           console.log("✏️ تحديث رسالة:", updatedMessage.id);
+
+          // 🔥 محاولة parse sources من JSON إذا كان موجوداً
+          let sources: any[] = [];
+          if (updatedMessage.sources) {
+            try {
+              sources =
+                typeof updatedMessage.sources === "string"
+                  ? JSON.parse(updatedMessage.sources)
+                  : updatedMessage.sources;
+            } catch (e) {
+              console.warn("Failed to parse sources:", e);
+            }
+          }
+
+          // إذا لم يكن هناك sources array، نستخدم المصدر القديم للتوافق
+          if (sources.length === 0 && updatedMessage.source_book_name) {
+            sources = [
+              {
+                title: updatedMessage.source_book_name,
+                pageNumber: updatedMessage.source_page_number || 1,
+                bookId: updatedMessage.book_id || null,
+                downloadUrl: updatedMessage.download_url || null,
+                isWebSource: false,
+              },
+            ];
+          }
+
           setMessages((prev) =>
             prev.map((m) =>
               m.id === updatedMessage.id
@@ -451,6 +834,9 @@ export default function ChatInterface() {
                   source: updatedMessage.source,
                   sourceBookName: updatedMessage.source_book_name,
                   sourcePageNumber: updatedMessage.source_page_number,
+                  downloadUrl: updatedMessage.download_url,
+                  bookId: updatedMessage.book_id || null,
+                  sources: sources.length > 0 ? sources : undefined, // 🆕 sources array
                 }
                 : m
             )
@@ -485,6 +871,26 @@ export default function ChatInterface() {
 
     return () => clearInterval(scrollInterval);
   }, [streamingMessageId]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      if (scrollHeight <= clientHeight) {
+        setScrollProgress(0);
+        return;
+      }
+      const progress =
+        (scrollTop / (scrollHeight - clientHeight)) * 100;
+      setScrollProgress(progress);
+    };
+
+    handleScroll();
+    container.addEventListener("scroll", handleScroll);
+    return () => container.removeEventListener("scroll", handleScroll);
+  }, [messages.length]);
 
   // =========================================================
   // Upload File to Supabase
@@ -529,705 +935,661 @@ export default function ChatInterface() {
       (!msg && !attachedImage && !attachedFile) ||
       isPending ||
       isSendingMessage
-    )
+    ) {
+      console.log("SendMessage: Message input is empty or already sending.");
       return;
-    if (!isLoggedIn || !user) return router.push("/login?redirect=/chat");
+    }
 
-    const uid = user.id;
+    const uid = user?.id;
+    if (!uid) {
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "User not logged in.",
+      });
+      console.log("SendMessage: User not logged in.");
+      return;
+    }
+
     setInput("");
     const img = attachedImage;
     const file = attachedFile;
     setAttachedImage(null);
     setAttachedFile(null);
 
-    // 🔥 FIX: إخفاء شاشة الترحيب فوراً عند الإرسال (بدون انتظار animation)
-    if (showWelcome) {
-      setShowWelcome(false);
-      setWelcomeExit(false);
-    }
-
-    // 🔥 OPTIMISTIC UPDATE: عرض الرسالة فوراً قبل أي عملية
+    // 🔥 OPTIMISTIC UPDATE: Display the message immediately
     const tempUserMessageId = `temp-user-${Date.now()}`;
     const tempUserMessage: Message = {
       id: tempUserMessageId,
       role: "user",
       content: msg,
-      imageBase64: img || null, // Use local base64 immediately
-      fileUrl: null, // File URL not ready yet
+      imageBase64: img || null,
+      fileUrl: file?.name || null, // Use file name instead of file object
       fileName: file?.name || null,
     };
     setMessages((prev) => [...prev, tempUserMessage]);
+    console.log("SendMessage: Optimistic update added.", tempUserMessage);
+
+    // 🔥 Set loading states IMMEDIATELY (before startTransition)
+    setIsSendingMessage(true);
+    setIsAssistantTyping(true); // Show typing indicator immediately
 
     startTransition(async () => {
       try {
-        setIsSendingMessage(true);
-        // await new Promise((resolve) => setTimeout(resolve, 300)); // 🚫 Removed artificial delay
-
-        let chatId = currentChatId;
-        if (!chatId) {
-          chatId = await createChat(uid, msg || "صورة");
-          setCurrentChatId(chatId);
-          router.replace(`/chat?chatId=${chatId}`);
-
-          // 🔥 Dispatch custom event to update sidebar immediately
-          console.log("📤 Dispatching newChatCreated event:", chatId);
-          window.dispatchEvent(
-            new CustomEvent("newChatCreated", {
-              detail: {
-                id: chatId,
-                title: msg ? msg.substring(0, 50) : "New chat",
-                lastMessagePreview: msg ? msg.substring(0, 80) : "",
-              },
-            })
-          );
-          console.log("✅ Event dispatched successfully");
-        }
-
-        // Upload image
-        let uploadedImageUrl: string | undefined = undefined;
-        if (img) {
-          try {
-            const compressed = await compressDataUrl(img, 1200, 0.8);
-            const blob = await fetch(compressed).then((r) => r.blob());
-            const path = `users/${uid}/uploads/${Date.now()}.jpg`;
-
-            const { data, error } = await supabase.storage
-              .from("Tawjihi-Ai")
-              .upload(path, blob, { contentType: "image/jpeg" });
-
-            if (!error && data) {
-              const { data: urlData } = supabase.storage
-                .from("Tawjihi-Ai")
-                .getPublicUrl(path);
-              uploadedImageUrl = urlData.publicUrl;
-            }
-          } catch (err) {
-            console.log("❌ Upload failed, using Data URI instead");
-          }
-        }
-
-        // Upload file
-        let uploadedFileUrl: string | null = null;
-        if (file?.file) {
-          uploadedFileUrl = await uploadFileToSupabase(file.file, uid);
-        }
-
-        // Save user message to database
-
-        // Save user message to database
-        const savedUserMessage = await saveMessage(uid, chatId!, {
-          role: "user",
-          content: msg,
-          imageDataUri: uploadedImageUrl || img || undefined,
-          fileUrl: uploadedFileUrl || null,
-          fileName: file?.name || null,
-        });
-
-        // ✅ Replace temp ID with real ID
-        if (savedUserMessage?.id) {
-          setTimeout(() => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === tempUserMessageId
-                  ? { ...m, id: savedUserMessage.id }
-                  : m
-              )
-            );
-          }, 100);
-        }
-
-        // 🔥 Update chat title in sidebar with the user's FIRST message only
-        const isFirstMessage = messages.length === 0;
-        if (msg && chatId && isFirstMessage) {
-          window.dispatchEvent(
-            new CustomEvent("chatTitleUpdated", {
-              detail: {
-                id: chatId,
-                title: msg.substring(0, 50),
-                lastMessagePreview: msg.substring(0, 80),
-              },
-            })
-          );
-        }
-
-        // Start AI typing animation
-        setIsAssistantTyping(true);
-
-        // Prepare history
-        const history = messages
-          .map((m) => ({
-            role: m.role,
-            content: m.content || "",
-            imageBase64: m.imageBase64 || null,
-          }))
-          .filter((m) => m.content.trim() !== "" || m.imageBase64);
-
-        const finalImage = img ?? undefined;
-
-        let fileBase64: string | undefined = undefined;
-        let fileMimeType: string | undefined = undefined;
-        let fileName: string | undefined = undefined;
-
-        if (file?.file) {
-          const reader = new FileReader();
-          const fileLoaded = await new Promise<string>((resolve) => {
-            reader.onload = () => resolve(reader.result as string);
-            reader.readAsDataURL(file.file);
-          });
-          fileBase64 = fileLoaded.split(",")[1];
-          fileMimeType = file.file.type;
-          fileName = file.file.name;
-        }
-
-        // Get AI response
-        const result = await askQuestionAction({
-          question: msg || "",
-          expandSearchOnline: expandSearch,
-          language: lang,
+        console.log("SendMessage: Calling askQuestionAction with:", {
+          question: msg,
           userId: uid,
-          chatId: chatId || "",
-          imageBase64: finalImage,
-          fileBase64,
-          fileMimeType,
-          fileName,
-          history: history as any,
-          branch: branch || null,
+          chatId: currentChatId || "",
+          bookId: selectedBookId || null,
+          language: lang,
+          expandSearchOnline: expandSearch,
+          history: messages.map((m) => ({ role: m.role, content: m.content })),
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        setIsAssistantTyping(false);
-
-        // Typing effect
-        const tempMessageId = `temp-${Date.now()}`;
-        const tempMessage: Message = {
-          id: tempMessageId,
-          role: "assistant",
-          content: result.answer,
-          lang: result.lang as "ar" | "en",
-          source: result.source,
-        };
-
-        setMessages((prev) => [...prev, tempMessage]);
-        setStreamingMessageId(tempMessageId);
-        setStreamText("");
-        setIsStreaming(true);
-
-        const controller = new AbortController();
-        abortControllerRef.current = controller;
-
-        await typeEffect(
-          result.answer,
-          (displayedText) => {
-            setStreamText(displayedText);
-          },
-          2,
-          controller.signal
-        );
-
-        setIsStreaming(false);
-        setStreamingMessageId(null);
-        setStreamText("");
-
-        // Save assistant message
-        const saveResult = await saveMessage(uid, chatId!, {
-          role: "assistant",
-          content: result.answer,
-          source: result.source,
-          sourceBookName: result.sourceBookName,
-          sourcePageNumber: result.sourcePageNumber,
-          lang: result.lang as "ar" | "en",
+        const response = await askQuestionAction({
+          question: msg, // Updated to match the expected property
+          userId: uid,
+          chatId: currentChatId || "", // Ensure chatId is provided
+          bookId: selectedBookId || null, // Ensure bookId is null if undefined
+          language: lang,
+          expandSearchOnline: expandSearch, // Added missing property
+          history: messages.map((m) => ({ role: m.role, content: m.content })), // Added missing property
         });
 
-        const realMessageId = saveResult?.id || tempMessageId;
-        setTimeout(() => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === tempMessageId
-                ? {
-                  ...m,
-                  id: realMessageId,
-                  content: result.answer,
-                  source: result.source,
-                  sourceBookName: result.sourceBookName,
-                  sourcePageNumber: result.sourcePageNumber,
-                  lang: result.lang as "ar" | "en",
-                }
-                : m
-            )
+        console.log("SendMessage: askQuestionAction response:", response);
+
+        if (response && response.answer) {
+          const aiMessageId = `ai-${Date.now()}`;
+          const aiMessage: Message = {
+            id: aiMessageId,
+            role: "assistant",
+            content: "", // Start with empty content
+            lang: response.lang,
+            sources: response.sources || [],
+            sourceBookName: response.sourceBookName,
+            sourcePageNumber: response.sourcePageNumber
+              ? parseInt(response.sourcePageNumber as any)
+              : undefined,
+            downloadUrl: response.downloadUrl || undefined,
+            bookId: response.bookId ? String(response.bookId) : undefined,
+          };
+
+          // Add the empty AI message first
+          setMessages((prev) => [
+            ...prev.filter((m) => m.id !== tempUserMessageId),
+            tempUserMessage,
+            aiMessage,
+          ]);
+
+          // Start streaming the response
+          setStreamingMessageId(aiMessageId);
+          setIsStreaming(true);
+
+          // Use typeEffect to stream the text
+          await typeEffect(
+            response.answer,
+            (displayedText) => {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === aiMessageId ? { ...m, content: displayedText } : m
+                )
+              );
+            },
+            20 // Speed of typing animation (ms per character)
           );
-        }, 100);
-      } catch (e) {
-        const errorMsg = e instanceof Error ? e.message : "Unknown error";
-        console.error("Failed to send message:", errorMsg);
+
+          setIsStreaming(false);
+          setStreamingMessageId(null);
+          console.log("SendMessage: AI response streaming complete.");
+        } else {
+          console.error("SendMessage: Invalid response structure:", response);
+          toast({
+            variant: "destructive",
+            title: "Error",
+            description: "Invalid response from AI.",
+          });
+        }
+      } catch (error) {
+        console.error("Error sending message:", error);
         toast({
-          title: lang === "ar" ? "خطأ" : "Error",
-          description:
-            lang === "ar"
-              ? "حدث خطأ أثناء إرسال الرسالة"
-              : "Failed to send message",
           variant: "destructive",
+          title: "Error",
+          description: "Failed to send the message.",
         });
-        setIsAssistantTyping(false);
       } finally {
         setIsSendingMessage(false);
+        setIsAssistantTyping(false); // Hide typing indicator
       }
     });
   };
 
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const displayedMessages =
+    normalizedSearch.length === 0
+      ? messages
+      : messages.filter((m) =>
+        (m.content || "").toLowerCase().includes(normalizedSearch)
+      );
+
   // =========================================================
-  // UI — Messages Rendering
+  // UI — Messages Rendering (New Design from code.html)
   // =========================================================
   return (
-    <div className="flex flex-col h-full w-full relative">
-      <div className="flex-1 overflow-y-auto">
-        <div className="w-full px-4 py-6">
-          {showWelcome && messages.length === 0 ? (
-            <div
-              className={cn(
-                "min-h-[calc(100vh-220px)] flex items-center justify-center px-4",
-                "transition-all duration-500",
-                welcomeExit ? "opacity-0 scale-95" : "opacity-100 scale-100"
-              )}
-            >
-              <div className="w-full max-w-2xl space-y-8 text-center">
-                <div className="space-y-3">
-                  <h1 className="text-3xl sm:text-4xl font-bold text-foreground">
-                    {isArabic
-                      ? `مرحباً ${displayName} 👋`
-                      : `Welcome ${displayName} 👋`}
-                  </h1>
-                  <p className="text-muted-foreground text-base max-w-md mx-auto">
-                    {isArabic
-                      ? "كيف يمكنني مساعدتك اليوم؟"
-                      : "How can I help you today?"}
-                  </p>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {quickPrompts.slice(0, 4).map((prompt) => (
-                    <button
-                      key={prompt.text}
-                      onClick={() => setInput(prompt.text)}
-                      className="group p-4 rounded-xl border border-border/50 bg-background/50 hover:bg-background hover:border-primary/40 transition-all text-right"
-                      dir={isArabic ? "rtl" : "ltr"}
-                    >
-                      <p className="text-xs text-primary/70 font-medium mb-1">
-                        {prompt.category}
-                      </p>
-                      <p className="text-sm text-foreground group-hover:text-primary transition-colors">
-                        {prompt.text}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-
-                <Button
-                  size="lg"
-                  onClick={() => textareaRef.current?.focus()}
-                  className="rounded-full px-8"
-                >
-                  <Send className="h-4 w-4 mr-2" />
-                  {isArabic ? "ابدأ المحادثة" : "Start chatting"}
-                </Button>
+    <main className=" flex flex-col relative h-screen overflow-hidden text-gray-100">
+      <div
+        className="absolute inset-0  "
+        aria-hidden
+      />
+      
+      <div
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto px-4 md:px-10 lg:px-24 scroll-smooth"
+      >
+<div className="max-w-3xl mx-auto pb-11 pt-1 flex flex-col gap-8">
+          {messages.length > 0 && (
+            <div className="sticky top-0 z-20 -mt-2 pb-3 bg-gradient-to-b from-[#020617] via-[#020617]/90 to-transparent">
+              <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-200"
+                  style={{ width: `${scrollProgress}%` }}
+                />
               </div>
             </div>
-          ) : (
+          )}
+          {/* Welcome State */}
+          {showWelcome && messages.length === 0 ? (
+  <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 animate-fade-up">
+    <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary to-lime-400 flex items-center justify-center shadow-[0_0_40px_rgba(50,205,50,0.4)]">
+      <Sparkles className="w-10 h-10 text-white" />
+    </div>
+    
+    <h1 className="text-4xl md:text-5xl font-bold text-white text-center">
+      {lang === "ar" ? "مرحباً بك!" : "Welcome!"}
+    </h1>
+    
+    <p className="text-white/60 text-center max-w-md">
+      {lang === "ar" 
+        ? "ابدأ بطرح سؤالك وسأساعدك في فهم أي موضوع"
+        : "Start by asking your question and I'll help you understand any topic"}
+    </p>
+    
+    <Button
+      onClick={() => textareaRef.current?.focus()}
+      className="mt-4 rounded-2xl px-8 py-4 bg-gradient-to-r from-primary to-emerald-400 text-slate-900 font-bold text-lg shadow-[0_20px_50px_rgba(34,197,94,0.4)] hover:scale-105 transition-transform"
+    >
+      {lang === "ar" ? "ابدأ الآن" : "Start Now"}
+    </Button>
+  </div>
+) : (
             <>
-              {messages.map((m) => {
-                const isAssistant = m.role === "assistant";
-                const dir =
-                  m.lang === "ar" || /[\u0600-\u06FF]/.test(m.content || "")
-                    ? "rtl"
-                    : "ltr";
+            
+              {displayedMessages.map((m) => {
+                const isUser = m.role === "user";
 
+                if (isUser) {
+                  // ========== User Message ==========
+                  return (
+                    <div
+                      key={m.id}
+                      className="flex items-start gap-4 py-2 justify-end group animate-fade-up"
+                    >
+                      <div className="flex flex-col gap-1 items-end max-w-[75%]">
+                        <div className=" px-5 py-4 rounded-2xl rounded-bl-none text-white">
+                          <p className="text-[15px] font-bold leading-loose whitespace-pre-wrap">
+                            {m.content}
+                          </p>
+                          {m.imageBase64 && (
+                            <img
+                              src={m.imageBase64}
+                              alt="Upload"
+                              className="mt-2 rounded-lg max-w-full"
+                            />
+                          )}
+                          {m.fileName && (
+                            <div className="mt-2 text-xs flex items-center gap-1 bg-black/10 px-2 py-1 rounded">
+                              <Paperclip className="w-3 h-3" />
+                              {m.fileName}
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[11px] text-white/30 mr-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {lang === "ar" ? "تمت القراءة" : "Read"}
+                        </span>
+                      </div>
+                      {/* User Avatar */}
+                       
+                    </div>
+                  );
+                }
+
+                // ========== Assistant Message ==========
                 return (
                   <div
                     key={m.id}
-                    className={cn(
-                      "flex w-full my-4 animate-fadeInUp",
-                      isAssistant ? "justify-start" : "justify-end"
-                    )}
+                    className="flex items-start gap-5 justify-start w-full group animate-fade-up"
                   >
-                    {isAssistant ? (
+                    
+
+                    <div className="flex flex-col gap-4 max-w-[85%]">
+                      {(() => {
+                        const label = getIntentLabel(m.intentType, lang);
+                        if (!label) return null;
+                        const badgeClass = m.intentType
+                          ? INTENT_BADGE_CLASSES[m.intentType]
+                          : "bg-white/10 text-white/70  ";
+
+                        return (
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-semibold tracking-[0.35em] uppercase",
+                                badgeClass
+                              )}
+                            >
+                              <span className="inline-block h-1.5 w-1.5 rounded-full bg-white/90" />
+                              {label}
+                            </span>
+                            <span className="text-[11px] text-white/40">
+                              {lang === "ar" ? "جزء من الشرح" : "Intent block"}
+                            </span>
+                          </div>
+                        );
+                      })()}
+
+                      
+
+                      {/* Content */}
                       <div
-                        dir={dir}
                         className={cn(
-                          "group relative rounded-2xl px-6 py-5 shadow-sm transition-all border",
-                          "bg-background/70 backdrop-blur-sm border-border/40 hover:bg-background/80",
-                          "max-w-[720px] w-full transition-all duration-300",
-                          sidebarState === "collapsed" ? "ml-6" : "ml-20"
+                          "rounded-3xl px-5 py-5 md:px-6 md:py-6 text-[15px] leading-loose text-white/90 shadow-[0_30px_80px_rgba(0,0,0,0.6)] space-y-5 backdrop-blur-2xl",
+                          INTENT_PANEL_CLASSES[m.intentType ?? "default"]
                         )}
                       >
-                        <div
-                          className={cn(
-                            "flex items-center gap-2 mb-4",
-                            dir === "rtl" && "flex-row-reverse"
-                          )}
-                        >
-                          <Sparkles className="h-4 w-4 text-primary flex-shrink-0" />
-                          <span className="text-xs font-semibold text-primary/80">
-                            {m.lang === "ar"
-                              ? "توضيح متقدم"
-                              : "Enhanced Explanation"}
-                          </span>
-                        </div>
+                        {renderAssistantContent(m.content || "")}
+                      </div>
 
-                        {m.imageBase64 && (
-                          <img
-                            src={m.imageBase64}
-                            className="rounded-xl border border-border/40 mb-4 max-w-[320px] object-contain"
-                          />
-                        )}
-
-                        {m.fileUrl && (
-                          <div className="mt-3 p-3 rounded-xl border border-border/60 bg-background/70 backdrop-blur-sm max-w-[340px]">
-                            <div className="flex items-center gap-2 mb-2 text-sm font-medium">
-                              <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-primary/10 text-primary">
-                                <FileText className="h-4 w-4" />
-                              </span>
-                              <span className="truncate">
-                                {m.fileName || "Attached file"}
-                              </span>
-                            </div>
-                            <a
-                              href={m.fileUrl}
-                              download={m.fileName}
-                              className="inline-block px-3 py-2 rounded-lg bg-primary text-primary-foreground text-xs hover:bg-primary/80 transition"
-                            >
-                              {m.lang === "ar"
-                                ? "تحميل الملف"
-                                : "Download file"}
-                            </a>
-                          </div>
-                        )}
-
-                        {streamingMessageId === m.id ? (
-                          <div>
-                            {renderAssistantContent(streamText)}
-                            {streamText.length < m.content.length && (
-                              <span className="inline-block w-[2px] h-5 bg-primary ml-1 animate-pulse" />
-                            )}
-                          </div>
-                        ) : (
-                          renderAssistantContent(m.content)
-                        )}
-
-                        {m.sourceBookName && (
-                          <div className="mt-4 pt-3 border-t border-border/20 flex items-center gap-2 text-xs text-muted-foreground">
-                            <BookOpen className="h-4 w-4 text-primary flex-shrink-0" />
-                            <div className="flex flex-col gap-0.5">
-                              <span className="font-semibold text-foreground/80">
-                                {lang === "ar" ? "من" : "From"}{" "}
-                                {m.sourceBookName}
-                              </span>
-                              {m.sourcePageNumber && (
-                                <span className="text-muted-foreground text-[11px]">
-                                  {lang === "ar"
-                                    ? `الصفحة ${m.sourcePageNumber}`
-                                    : `Page ${m.sourcePageNumber}`}
-                                </span>
+                      {/* Sources - دعم مصادر متعددة (كتاب + إنترنت) */}
+                      {m.role === "assistant" &&
+                        m.content &&
+                        m.id !== streamingMessageId && (
+                          <div className="mt-4 flex flex-wrap gap-2 animate-fade-up">
+                            {/* إذا كان هناك sources array (متعدد) */}
+                            {m.sources && m.sources.length > 0
+                              ? m.sources.map((source, idx) => (
+                                <button
+                                  key={idx}
+                                  onClick={() => {
+                                    if (source.downloadUrl) {
+                                      if (source.isWebSource) {
+                                        // رابط إنترنت - فتح في tab جديد
+                                        window.open(
+                                          source.downloadUrl,
+                                          "_blank"
+                                        );
+                                      } else {
+                                        // رابط كتاب - فتح PDF
+                                        handleOpenSource(
+                                          source.downloadUrl,
+                                          source.pageNumber || undefined
+                                        );
+                                      }
+                                    }
+                                  }}
+                                  className={cn(
+                                    "flex items-center gap-2 px-3 py-1.5 rounded-2xl border text-[11px] hover:scale-105 transition-all font-bold group backdrop-blur-xl",
+                                    source.isWebSource
+                                      ? "bg-emerald-400/10 border-emerald-400/30 text-emerald-200 hover:bg-emerald-400/20 hover:border-emerald-400/50 hover:shadow-[0_0_15px_rgba(52,211,153,0.4)]"
+                                      : "bg-primary/10 border-primary/20 text-primary hover:bg-primary/20 hover:border-primary/40 hover:shadow-[0_0_15px_rgba(50,205,50,0.35)]"
+                                  )}
+                                >
+                                  {source.isWebSource ? (
+                                    // 🔥 أيقونة الموقع من الإنترنت مع fallback محسّن
+                                    <div className="relative shrink-0 w-6 h-6 flex items-center justify-center bg-white/10 rounded border border-white/20 group-hover:border-emerald-300/60 transition-colors overflow-hidden">
+                                      <img
+                                        src={getFaviconUrl(
+                                          source.downloadUrl || ""
+                                        )}
+                                        alt={getDomainName(
+                                          source.downloadUrl || ""
+                                        )}
+                                        className="w-full h-full rounded object-contain"
+                                        style={{
+                                          imageRendering: "auto" as const,
+                                        }}
+                                        loading="lazy"
+                                        onError={(e) => {
+                                          // إخفاء الصورة وإظهار الأيقونة البديلة
+                                          const target =
+                                            e.target as HTMLImageElement;
+                                          target.style.display = "none";
+                                          const parent = target.parentElement;
+                                          if (parent) {
+                                            const fallback =
+                                              parent.querySelector(
+                                                ".favicon-fallback"
+                                              ) as HTMLElement;
+                                            if (fallback) {
+                                              fallback.style.display = "flex";
+                                            }
+                                          }
+                                        }}
+                                      />
+                                      {/* Fallback icon if favicon fails */}
+                                      <ExternalLink
+                                        size={16}
+                                        className="text-emerald-200 shrink-0 favicon-fallback hidden absolute inset-0 items-center justify-center"
+                                      />
+                                    </div>
+                                  ) : (
+                                    // أيقونة الكتاب
+                                    <FileText
+                                      size={14}
+                                      className="shrink-0"
+                                    />
+                                  )}
+                                  <span className="font-medium max-w-[200px] truncate">
+                                    {source.isWebSource
+                                      ? getDomainName(
+                                        source.downloadUrl || source.title
+                                      )
+                                      : source.title}
+                                    {source.pageNumber &&
+                                      !source.isWebSource && (
+                                        <span className="text-white/50 ml-1">
+                                          (ص. {source.pageNumber})
+                                        </span>
+                                      )}
+                                  </span>
+                                  {source.isWebSource && (
+                                    <ExternalLink
+                                      size={12}
+                                      className="opacity-50 group-hover:opacity-100 shrink-0 ml-1 transition-opacity"
+                                    />
+                                  )}
+                                </button>
+                              ))
+                              : // Legacy: مصدر واحد فقط (للتوافق مع الكود القديم)
+                              m.sourceBookName && (
+                                <button
+                                  onClick={() => {
+                                    if (m.downloadUrl) {
+                                      handleOpenSource(
+                                        m.downloadUrl,
+                                        m.sourcePageNumber || undefined
+                                      );
+                                    }
+                                  }}
+                                  className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-primary/10 border border-primary/20 text-primary text-[11px] hover:bg-primary/20 transition-all font-bold"
+                                >
+                                  <FileText size={14} />
+                                  <span className="font-medium">
+                                    {lang === "ar" ? "المصدر: " : "Source: "}
+                                    {m.sourceBookName}
+                                    {m.sourcePageNumber && (
+                                      <span className="text-white/50 ml-1">
+                                        (ص. {m.sourcePageNumber})
+                                      </span>
+                                    )}
+                                  </span>
+                                </button>
                               )}
-                            </div>
                           </div>
                         )}
-
+                      {/* Actions */}
+                      <div className="flex items-center gap-4 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          dir="ltr"
                           onClick={() => {
-                            navigator.clipboard.writeText(m.content);
+                            navigator.clipboard.writeText(m.content || "");
                             setCopiedId(m.id);
-                            setTimeout(() => setCopiedId(null), 1500);
+                            setTimeout(() => setCopiedId(null), 1600);
                           }}
-                          className={cn(
-                            "absolute top-3 right-3 p-1.5 rounded-md transition-all",
-                            "bg-background/80 hover:bg-background border border-border/40 hover:border-border shadow-sm hover:shadow",
-                            copiedId === m.id
-                              ? "opacity-100"
-                              : "opacity-60 hover:opacity-100"
-                          )}
+                          className="text-white/40 hover:text-white transition-colors"
+                          title={lang === "ar" ? "نسخ" : "Copy"}
                         >
                           {copiedId === m.id ? (
-                            <Check className="h-4 w-4 text-green-500" />
+                            <Check className="w-[18px] h-[18px] text-primary" />
                           ) : (
-                            <Copy className="h-4 w-4 text-muted-foreground" />
+                            <Copy className="w-[18px] h-[18px]" />
                           )}
                         </button>
                       </div>
-                    ) : (
-                      <div
-                        dir={dir}
-                        className={cn(
-                          "max-w-[70%] lg:max-w-[60%] px-4 py-3 rounded-2xl shadow-sm transition-all duration-300",
-                          "dark:bg-primary/15 dark:border dark:border-primary/30 dark:text-white dark:backdrop-blur-md",
-                          "bg-primary/20 border border-primary/30 text-black"
-                        )}
-                      >
-                        {m.imageBase64 && (
-                          <img
-                            src={m.imageBase64}
-                            className="rounded-lg mb-2 border border-primary-foreground/20 max-w-[260px]"
-                          />
-                        )}
-                        {m.fileUrl && (
-                          <div className="mt-2 p-2 rounded-xl bg-accent/20 border border-border/50 max-w-[260px] backdrop-blur-sm">
-                            <div className="flex items-center gap-2 mb-2 text-xs font-medium">
-                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-foreground/10">
-                                <FileText className="h-3 w-3" />
-                              </span>
-                              <span className="truncate">{m.fileName}</span>
-                            </div>
-                            <a
-                              href={m.fileUrl}
-                              download={m.fileName}
-                              className="inline-block px-3 py-1.5 rounded-lg bg-foreground/10 hover:bg-foreground/20 text-xs transition"
-                            >
-                              {m.lang === "ar" ? "تحميل" : "Download"}
-                            </a>
-                          </div>
-                        )}
-                        <div>{m.content}</div>
-                      </div>
-                    )}
+                    </div>
                   </div>
                 );
               })}
 
-              {/* 🎬 انيميشن الإرسال */}
-              {isSendingMessage && (
-                <div className="flex justify-end my-4 animate-fadeInUp">
-                  <div className="px-6 py-4 rounded-2xl shadow-lg bg-gradient-to-r from-blue-400 to-blue-500 text-white max-w-[70%]">
-                    <div className="flex items-center gap-3">
-                      <div className="flex gap-1">
-                        <div
-                          className="w-2 h-2 bg-white rounded-full animate-bounce"
-                          style={{ animationDelay: "0ms" }}
-                        ></div>
-                        <div
-                          className="w-2 h-2 bg-white rounded-full animate-bounce"
-                          style={{ animationDelay: "150ms" }}
-                        ></div>
-                        <div
-                          className="w-2 h-2 bg-white rounded-full animate-bounce"
-                          style={{ animationDelay: "300ms" }}
-                        ></div>
-                      </div>
-                      <span className="text-sm opacity-90">
-                        {lang === "ar" ? "جاري الإرسال..." : "Sending..."}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 🎬 انيميشن كتابة الـ AI */}
-              {isAssistantTyping && !streamingMessageId && (
-                <div
-                  className="my-4 flex justify-start animate-fadeInUp"
-                  style={{
-                    marginLeft: sidebarState === "collapsed" ? "60px" : "100px",
-                  }}
-                >
-                  <div className="inline-flex items-center gap-3 bg-background/70 backdrop-blur-sm px-6 py-4 rounded-2xl shadow-sm border border-border/40">
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center animate-pulse">
-                      <Logo className="w-8 h-8 text-white" href="#" />
-                    </div>
-                    <div className="flex gap-1">
-                      <span
-                        className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
-                        style={{ animationDelay: "0ms" }}
-                      ></span>
-                      <span
-                        className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
-                        style={{ animationDelay: "150ms" }}
-                      ></span>
-                      <span
-                        className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
-                        style={{ animationDelay: "300ms" }}
-                      ></span>
-                    </div>
-                    <span className="text-sm text-muted-foreground">
-                      {lang === "ar"
-                        ? "الذكاء الاصطناعي يكتب..."
-                        : "AI is typing..."}
-                    </span>
-                  </div>
-                </div>
-              )}
+              {/* AI Typing Skeleton */}
+              {isAssistantTyping && <SkeletonCards count={2} rtl={isArabic} />}
             </>
           )}
           <div ref={messagesEndRef} />
         </div>
       </div>
 
-      {userScrolled && (
-        <button
-          onClick={() => {
-            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-            setUserScrolled(false);
-          }}
-          className="fixed bottom-24 right-8 z-50 h-10 w-10 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl transition-all hover:scale-110 flex items-center justify-center"
-        >
-          <svg
-            className="h-5 w-5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M19 14l-7 7m0 0l-7-7m7 7V3"
-            />
-          </svg>
-        </button>
-      )}
+      {/* ================= INPUT BAR (Bottom) ================= */}
+<div className="absolute bottom-0 w-full px-4 md:px-20 lg:px-40 pb-3 pt-2  backdrop-blur-[100px] z-20 pointer-events-none">
 
-      {/* Input Area */}
-      <div className="w-full">
-        <div className="max-w-3xl mx-auto px-4 py-4">
-          {attachedImage && (
-            <div className="relative inline-block mb-3 mr-3">
-              <img
-                src={attachedImage}
-                className="w-20 h-20 object-cover rounded-lg border border-border"
-              />
-              <Button
-                type="button"
-                variant="destructive"
-                size="icon"
-                className="absolute -top-2 -right-2 h-5 w-5"
-                onClick={() => setAttachedImage(null)}
+        <div className="max-w-[1200px] mx-auto pointer-events-auto">
+          {/* Book Selector */}
+          {availableBooks.length > 0 && (
+            <div className="flex justify-start mb-2 px-1">
+              <Select
+                value={selectedBookId || "all"}
+                onValueChange={(value) =>
+                  setSelectedBookId(value === "all" ? undefined : value)
+                }
               >
-                <X className="h-3 w-3" />
-              </Button>
+                <SelectTrigger className="w-auto bg-white/5 backdrop-blur-md border border-white/15 hover:border-primary/50 hover:shadow-[0_0_20px_rgba(50,205,50,0.2)] transition-all duration-300 text-xs text-white/80 h-auto py-1.5 px-3 rounded-2xl">
+                  <BookOpen className="text-primary w-4 h-4 mr-2" />
+                  <span>
+                    {lang === "ar" ? "المادة: " : "Book: "}
+                    <span className="font-bold text-white">
+                      {selectedBookId
+                        ? availableBooks.find((b) => b.id === selectedBookId)
+                          ?.file_name || (lang === "ar" ? "الكل" : "All")
+                        : lang === "ar"
+                          ? "اختر المادة"
+                          : "Select Book"}
+                    </span>
+                  </span>
+                </SelectTrigger>
+                <SelectContent
+                  className="bg-surface-dark border-white/10  "
+                  side="top"
+                  position="popper"
+                  sideOffset={8}
+                >
+                  <SelectItem
+                    value="all"
+                    className="font-semibold text-white hover:bg-white/10"
+                  >
+                    {lang === "ar" ? "اختر المادة" : "Select Book"}
+                  </SelectItem>
+                  {availableBooks.map((book) => (
+                    <SelectItem
+                      key={book.id}
+                      value={book.id}
+                      className="text-white hover:bg-white/10"
+                    >
+                      {book.file_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           )}
 
-          {attachedFile && (
-            <div className="inline-flex items-center gap-2 mb-3 px-3 py-2 rounded-xl border border-border bg-background/70 backdrop-blur-sm">
-              <FileText className="h-4 w-4 text-primary" />
-              <span className="text-xs truncate max-w-[220px]">
-                {attachedFile.name}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-6 w-6"
-                onClick={() => setAttachedFile(null)}
-              >
-                <X className="h-3 w-3" />
-              </Button>
-            </div>
-          )}
+          {/* Main Glass Input Bar */}
+          <div className="relative flex items-end gap-1 p-1 rounded-3xl bg-white/[0.03] backdrop-blur-2xl border border-white/10 shadow-[0_35px_100px_rgba(0,0,0,0.65)] transition-shadow focus-within:border-primary/50 focus-within:shadow-[0_0_40px_rgba(50,205,50,0.25)]">
+            {/* Attach Button */}
+            <button
+              onClick={open}
+              className="flex items-center justify-center w-10 h-10 rounded-2xl text-white/60 hover:text-primary hover:bg-white/10 transition-all shrink-0 mb-1"
+            >
+              <Paperclip className="w-5 h-5" />
+            </button>
 
-          <div {...getRootProps()}>
-            <input {...getInputProps()} />
-            <div className="flex items-end gap-2 rounded-2xl bg-background border border-border p-2 focus-within:ring-2 focus-within:ring-primary">
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                onClick={open}
-                className="h-9 w-9"
-              >
-                <Paperclip className="h-4 w-4" />
-              </Button>
+            {/* Text Input */}
+            <div className="flex-1 py-3">
               <textarea
                 ref={textareaRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={t.chatPlaceholder || "اكتب سؤالك..."}
-                className="flex-1 bg-transparent text-sm px-2 py-2 resize-none max-h-40 outline-none"
-                rows={1}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${Math.min(
+                    e.target.scrollHeight,
+                    128
+                  )}px`;
+                  // إزالة أي خلفية بيضاء قد تظهر من المتصفح
+                  e.target.style.backgroundColor = "transparent";
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     sendMessage();
                   }
                 }}
-                disabled={isSendingMessage || isAssistantTyping}
+                onFocus={(e) => {
+                  e.target.style.backgroundColor = "transparent";
+                  e.target.style.backgroundImage = "none";
+                }}
+                className="w-full bg-transparent text-white placeholder:text-white/40 max-h-32 overflow-y-auto leading-relaxed text-base px-2 outline-none border-none resize-none autofill:bg-transparent"
+                placeholder={
+                  lang === "ar"
+                    ? "اكتب سؤالك هنا..."
+                    : "Type your question here..."
+                }
+                rows={1}
+                style={{
+                  backgroundColor: "transparent",
+                  backgroundImage: "none",
+                  WebkitBackgroundClip: "text",
+                }}
               />
-              {/* 🔥 Single button that changes between Send/Loading/Stop */}
-              <Button
-                type="button"
-                size="icon"
-                className={cn(
-                  "h-9 w-9 transition-all duration-300",
-                  isStreaming
-                    ? "bg-red-500/80 hover:bg-red-600 active:scale-95"
-                    : input.trim() || attachedImage || attachedFile
-                      ? "bg-primary hover:scale-110 hover:shadow-lg active:scale-95"
-                      : "bg-muted"
-                )}
-                disabled={
-                  !isStreaming &&
-                  (isPending ||
-                    isSendingMessage ||
-                    isAssistantTyping ||
-                    (!input.trim() && !attachedImage && !attachedFile))
-                }
-                onClick={isStreaming ? handleStopStreaming : sendMessage}
-                title={
-                  isStreaming
-                    ? lang === "ar"
-                      ? "إيقاف الرد"
-                      : "Stop response"
-                    : lang === "ar"
-                      ? "إرسال"
-                      : "Send"
-                }
+            </div>
+
+            {/* Send Button */}
+            <div className="flex items-center gap-1 mb-1">
+              <button
+                onClick={sendMessage}
+                disabled={isPending || isSendingMessage}
+                className="flex items-center justify-center w-11 h-11 rounded-2xl bg-gradient-to-r from-primary to-lime-300 text-slate-900 transition-all shadow-[0_20px_45px_rgba(34,197,94,0.35)] hover:scale-105 active:scale-95 disabled:opacity-40"
               >
-                {isStreaming ? (
-                  <X className="h-4 w-4" />
-                ) : isSendingMessage || isPending || isAssistantTyping ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
+                {isPending || isSendingMessage ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
                 ) : (
-                  <Send className="h-4 w-4" />
+                  <Send className={cn("w-5 h-5", isArabic && "-rotate-180")} />
                 )}
-              </Button>
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center justify-center gap-2 mt-3">
-            <Switch checked={expandSearch} onCheckedChange={setExpandSearch} />
-            <Label className="text-xs text-muted-foreground">
-              {t.expandSearch || "Expand search"}
-            </Label>
+          {/* Footer: Web Search Toggle + Disclaimer */}
+          <div className="flex items-center justify-between gap-4 mt-3 px-1">
+            <button
+              onClick={() => {
+                setExpandSearch(!expandSearch);
+                if (!expandSearch && !selectedBookId) {
+                  toast({
+                    title:
+                      lang === "ar"
+                        ? "البحث عبر الإنترنت مفعل"
+                        : "Web search enabled",
+                    description:
+                      lang === "ar"
+                        ? "يمكنك الآن إرسال الأسئلة والبحث من الإنترنت"
+                        : "You can now send questions and search from the internet",
+                    variant: "default",
+                  });
+                }
+              }}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-2xl border transition-all group shrink-0 font-semibold backdrop-blur-xl",
+                expandSearch
+                  ? "bg-primary/15 border-primary text-primary shadow-[0_0_20px_rgba(50,205,50,0.35)]"
+                  : "bg-white/5 border-white/10 text-white/70 hover:border-primary/30"
+              )}
+            >
+              <Sparkles
+                className={cn(
+                  "w-4 h-4",
+                  expandSearch
+                    ? "text-primary animate-pulse"
+                    : "text-white/50 group-hover:text-primary"
+                )}
+              />
+              <span className="text-[12px] font-bold">
+                {lang === "ar"
+                  ? expandSearch
+                    ? "🌐 البحث عبر الإنترنت مفعل"
+                    : "🔍 تفعيل البحث عبر الإنترنت"
+                  : expandSearch
+                    ? "🌐 Web Search ON"
+                    : "🔍 Enable Web Search"}
+              </span>
+            </button>
+            <p className="text-left text-[11px] text-white/20 font-light truncate">
+              {lang === "ar"
+                ? expandSearch
+                  ? "سيتم البحث من الإنترنت والمصادر الخارجية"
+                  : "يجب اختيار كتاب أو تفعيل البحث عبر الإنترنت"
+                : expandSearch
+                  ? "Searching from internet and external sources"
+                  : "Select a book or enable web search"}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* ✅ CSS للانيميشنات */}
-      <style jsx>{`
-        @keyframes fadeIn {
+      {/* ================= ANIMATIONS ================= */}
+      <style jsx global>{`
+        @keyframes fadeUp {
           from {
             opacity: 0;
-            transform: translateY(20px);
+            transform: translateY(12px);
           }
           to {
             opacity: 1;
             transform: translateY(0);
           }
         }
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(20px);
+
+        .animate-fade-up {
+          animation: fadeUp 0.35s ease-out both;
+        }
+
+        @keyframes typingPulse {
+          0% {
+            opacity: 0.3;
           }
-          to {
+          50% {
             opacity: 1;
-            transform: translateY(0);
+          }
+          100% {
+            opacity: 0.3;
           }
         }
-        .animate-fadeIn {
-          animation: fadeIn 0.6s ease-out;
+
+        .typing-dot {
+          animation: typingPulse 1.2s infinite ease-in-out;
         }
-        .animate-fadeInUp {
-          animation: fadeInUp 0.4s ease-out;
+
+        .typing-dot.delay-1 {
+          animation-delay: 0.15s;
+        }
+
+        .typing-dot.delay-2 {
+          animation-delay: 0.3s;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          * {
+            animation: none !important;
+            transition: none !important;
+          }
         }
       `}</style>
-    </div>
+    </main>
   );
 }

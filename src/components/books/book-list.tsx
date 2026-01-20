@@ -41,6 +41,7 @@ import {
 import BookUpload from "./book-upload";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BRANCHES, type BranchId } from "@/constants/branches";
+import { useToast } from "@/hooks/use-toast";
 
 // ===============================
 // 📌 Book Type (Supabase Table)
@@ -52,7 +53,7 @@ type Book = {
   download_url: string;
   storage_path: string;
   branch: BranchId;
-  status: "pending" | "analyzed" | "error";
+  status: "pending" | "processing" | "analyzed" | "error"; // ✅ أضفت processing
   created_at: string;
 };
 
@@ -155,9 +156,6 @@ export default function BookList({
   // ===============================
   // 📌 Delete Book (DB + Storage)
   // ===============================
-  // ===============================
-  // 📌 Delete Book (DB + Storage)
-  // ===============================
   const handleDelete = async (book: Book) => {
     try {
       const res = await fetch(
@@ -181,17 +179,21 @@ export default function BookList({
     }
   };
 
+  // ✅ أضفت أيقونة للـ processing
   const statusIcons = {
     pending: <Loader2 className="mr-2 h-4 w-4 animate-spin text-yellow-500" />,
+    processing: <Loader2 className="mr-2 h-4 w-4 animate-spin text-blue-500" />,
     analyzed: <CheckCircle2 className="mr-2 h-4 w-4 text-black" />,
     error: <AlertCircle className="mr-2 h-4 w-4 text-red-500" />,
   };
 
+  // ✅ أضفت لون للـ processing
   const statusColors: Record<
     string,
     "secondary" | "default" | "destructive" | "outline"
   > = {
     pending: "secondary",
+    processing: "outline",
     analyzed: "default",
     error: "destructive",
   };
@@ -260,21 +262,26 @@ export default function BookList({
                     </TableCell>
 
                     <TableCell className="text-right flex items-center justify-end gap-2">
-                      {(book.status === "pending" ||
-                        book.status === "error") && (
-                        <AnalyzeButton
-                          book={book}
-                          onAnalyzeComplete={() => {
+                      {/* ✅ أضفت processing للشرط */}
+                      <AnalyzeButton
+                        book={book}
+                        onAnalyzeComplete={async () => {
+                          // ✅ جلب البيانات المحدثة من قاعدة البيانات
+                          const { data: updatedBook } = await supabase
+                            .from("books")
+                            .select("*")
+                            .eq("id", book.id)
+                            .single();
+
+                          if (updatedBook) {
                             setBooks((prev) =>
                               prev.map((b) =>
-                                b.id === book.id
-                                  ? { ...b, status: "analyzed" }
-                                  : b
+                                b.id === book.id ? updatedBook : b
                               )
                             );
-                          }}
-                        />
-                      )}
+                          }
+                        }}
+                      />
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <Button
@@ -315,6 +322,9 @@ export default function BookList({
   );
 }
 
+// ✅ تحسين AnalyzeButton مع Toast notifications
+// استبدل الـ AnalyzeButton function كاملة (من السطر 314 تقريباً) بهذا:
+
 function AnalyzeButton({
   book,
   onAnalyzeComplete,
@@ -323,30 +333,65 @@ function AnalyzeButton({
   onAnalyzeComplete: () => void;
 }) {
   const [analyzing, setAnalyzing] = useState(false);
+  const { toast } = useToast();
 
   const handleAnalyze = async () => {
     setAnalyzing(true);
+
+    toast({
+      title: "🔄 جاري التحليل...",
+      description: `بدأ تحليل: ${book.file_name}`,
+    });
+
     try {
       const res = await fetch("/api/admin/process-book", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bookId: book.id,
           storagePath: book.storage_path,
         }),
       });
 
+      const result = await res.json();
+
+      console.log("📊 Analysis Result:", result);
+
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to process book");
+        throw new Error(result.error || "Failed to process book");
       }
 
-      onAnalyzeComplete();
+      // Check if analysis was successful
+      if (result.success && result.processedPages > 0) {
+        toast({
+          title: "✅ تم التحليل بنجاح!",
+          description: `تم معالجة ${result.processedPages}/${result.totalPages} صفحة`,
+        });
+
+        // ✅ حدّث الحالة فوراً ثم أعد تحميل الصفحة
+        onAnalyzeComplete();
+
+        // انتظر قليلاً ثم أعد تحميل
+        setTimeout(() => {
+          window.location.reload();
+        }, 500);
+
+      } else if (result.errors && result.errors.length > 0) {
+        console.error("Analysis errors:", result.errors);
+        throw new Error(`فشل التحليل: ${result.errors[0]}`);
+      } else {
+        throw new Error("لم يتم معالجة أي صفحة.");
+      }
     } catch (e: any) {
-      console.error(e);
-      alert(`Analysis failed: ${e.message || "Unknown error"}`);
-    } finally {
-      setAnalyzing(false);
+      console.error("Analysis error:", e);
+      toast({
+        variant: "destructive",
+        title: "❌ فشل التحليل",
+        description: e.message || "Unknown error",
+      });
+      setAnalyzing(false); // أعد التفعيل عند الفشل
     }
+    // لا تضع setAnalyzing(false) هنا لأننا سنعمل reload
   };
 
   return (
@@ -361,7 +406,7 @@ function AnalyzeButton({
       ) : (
         <CheckCircle2 className="mr-2 h-4 w-4" />
       )}
-      {analyzing ? "Analyzing..." : "Analyze"}
+      {analyzing ? "جاري التحليل..." : (book.status === "analyzed" ? "Re-analyze" : "Analyze")}
     </Button>
   );
 }

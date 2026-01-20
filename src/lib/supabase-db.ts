@@ -14,7 +14,7 @@ export async function saveUser(user: any) {
 
   // هل المستخدم موجود أساسًا؟
   const { data: existing, error: fetchError } = await supabase
-    .from("users")
+    .from("profiles")
     .select("id, role")
     .eq("id", user.id)
     .maybeSingle();
@@ -26,7 +26,7 @@ export async function saveUser(user: any) {
 
   if (!existing) {
     // مستخدم جديد → نضع student مرة واحدة فقط
-    const { error } = await supabase.from("users").insert({
+    const { error } = await supabase.from("profiles").insert({
       id: user.id,
       email: user.email || "",
       display_name: displayName,
@@ -39,7 +39,7 @@ export async function saveUser(user: any) {
   } else {
     // مستخدم موجود → لا نلمس role نهائيًا
     const { error } = await supabase
-      .from("users")
+      .from("profiles")
       .update({
         email: user.email || "",
         display_name: displayName,
@@ -85,6 +85,8 @@ export type ChatMessagePayload = {
   source?: string;
   sourceBookName?: string;
   sourcePageNumber?: number;
+  downloadUrl?: string; // 🆕 رابط الملف من Supabase
+  bookId?: string | null;
   lang?: "ar" | "en";
 };
 
@@ -106,6 +108,8 @@ export async function saveMessage(
       source: message.source,
       source_book_name: message.sourceBookName,
       source_page_number: message.sourcePageNumber,
+      // download_url: message.downloadUrl, // ⏸️ تأجيل إلى أن نضيف العمود في Supabase
+      book_id: message.bookId || null,
       lang: message.lang,
       created_at: new Date().toISOString(),
     })

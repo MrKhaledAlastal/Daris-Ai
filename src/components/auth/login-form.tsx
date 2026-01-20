@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { signInWithEmail, signInWithGoogle } from "@/lib/supabase-auth";
-import { Loader2 } from "lucide-react";
+import { Loader2, Mail, Lock } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -34,7 +34,8 @@ export function LoginForm() {
   const { t } = useLanguage();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, loginAsDeveloper } = useAuth();
+  const { dir } = useLanguage();
 
   const redirectUrl = searchParams.get("redirect") || "/chat";
 
@@ -83,6 +84,18 @@ export function LoginForm() {
     }
   }
 
+  function handleDevLogin() {
+    setLoading(true);
+    try {
+      // @ts-ignore
+      loginAsDeveloper();
+      toast({ title: "Logged in as Developer!" });
+      router.replace(redirectUrl);
+    } catch (error) {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="grid gap-6">
       <Form {...form}>
@@ -94,7 +107,14 @@ export function LoginForm() {
               <FormItem>
                 <FormLabel>{t.email}</FormLabel>
                 <FormControl>
-                  <Input placeholder="name@example.com" {...field} />
+                  <div className="relative">
+                    <Mail className={`absolute top-2.5 ${dir === 'rtl' ? 'right-2.5' : 'left-2.5'} h-4 w-4 text-muted-foreground`} />
+                    <Input 
+                      placeholder="name@example.com" 
+                      {...field} 
+                      className={dir === 'rtl' ? 'pr-9' : 'pl-9'}
+                    />
+                  </div>
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -115,7 +135,14 @@ export function LoginForm() {
                   </Link>
                 </div>
                 <FormControl>
-                  <Input type="password" {...field} />
+                  <div className="relative">
+                    <Lock className={`absolute top-2.5 ${dir === 'rtl' ? 'right-2.5' : 'left-2.5'} h-4 w-4 text-muted-foreground`} />
+                    <Input 
+                      type="password" 
+                      {...field} 
+                      className={dir === 'rtl' ? 'pr-9' : 'pl-9'}
+                    />
+                  </div>
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -136,15 +163,16 @@ export function LoginForm() {
           <span className="w-full border-t" />
         </div>
         <div className="relative flex justify-center text-xs uppercase">
-          <span className="px-2 text-muted-foreground">Or continue with</span>
+          <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
         </div>
       </div>
       <Button
         variant="outline"
         onClick={handleGoogleSignIn}
         disabled={loading}
-        className="w-full glowing-btn"
+        className="w-full glowing-btn relative overflow-hidden group hover:bg-white hover:text-black transition-all duration-300"
       >
+        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700" />
         {loading ? (
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
         ) : (

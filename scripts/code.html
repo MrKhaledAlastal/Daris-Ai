@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+
+<html class="dark" dir="rtl" lang="ar">
+
+<head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&amp;display=swap"
+        rel="stylesheet" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+        rel="stylesheet" />
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#32cd32",
+                        "background-light": "#f6f8f6",
+                        "background-dark": "#0B0F0E",
+                        "surface-dark": "#161b16",
+                        "border-dark": "#294229",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans Arabic', sans-serif;
+        }
+
+        .neon-glow {
+            box-shadow: 0 0 15px rgba(50, 205, 50, 0.15);
+            border: 1px solid rgba(50, 205, 50, 0.3);
+        }
+
+        .code-block-neon {
+            border-left: 4px solid #32cd32;
+            background: rgba(50, 205, 50, 0.05);
+        }
+    </style>
+</head>
+
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display">
+
+    <!-- Code/Formula Block: Neon Style -->
+    <div class="bg-[#050705] border border-border-dark rounded-xl overflow-hidden relative group">
+        <div class="flex items-center justify-between px-6 py-3 border-b border-border-dark bg-white/5">
+            <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary text-sm">terminal</span>
+                <span class="text-xs font-bold text-slate-400 tracking-widest">FORMULA / CODE SNIPPET</span>
+            </div>
+
+        </div>
+        <div class="p-8 font-mono ltr flex flex-col items-center justify-center gap-4">
+            <div class="text-4xl text-primary font-bold tracking-widest py-4">
+                <span class="text-white">Φ</span> = <span class="text-primary">B</span> · <span
+                    class="text-primary">A</span> · <span class="text-white">cos(θ)</span>
+            </div>
+            <div class="w-full h-px bg-border-dark"></div>
+            <div class="grid grid-cols-2 gap-6 w-full text-sm">
+                <div class="flex gap-2">
+                    <span class="text-primary">B:</span>
+                    <span class="text-slate-400">Magnetic Field (Tesla)</span>
+                </div>
+                <div class="flex gap-2">
+                    <span class="text-primary">A:</span>
+                    <span class="text-slate-400">Surface Area (m²)</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Practical Example Block -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+
+    </div>
+    </div>
+    <!-- AI Chat Interaction -->
+
+    </div>
+    </main>
+    <!-- Right Toolbelt -->
+
+    </div>
+</body>
+
+</html>
