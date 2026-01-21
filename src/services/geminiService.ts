@@ -1,5 +1,3 @@
-// services/gemini.ts - محدّث مع Exam Mode ⚡
-
 import { Message, AcademicBranch, BRANCH_NAMES } from "../types";
 import { generateQueryEmbedding } from "@/lib/embeddings";
 import { supabaseAdmin } from "@/lib/supabase-admin";
@@ -13,10 +11,6 @@ import {
   defaultPrompt
 } from "@/lib/subjectPrompts";
 
-// 🔥 NEW: استيراد البرومبتات السريعة والاختيار الذكي
-import { getUrgentPrompt } from "@/lib/urgentPrompts";
-import { smartModelSelector } from "./smartModelSelector";
-
 export class GeminiService {
   private MODEL_PRIORITY = [
     "google/gemini-2.0-flash-exp:free",
@@ -24,26 +18,6 @@ export class GeminiService {
     "qwen/qwen-2.5-72b-instruct:free",
     "xiaomi/mimo-v2-flash:free"
   ];
-
-  // 🔥 NEW: دالة اختيار النماذج حسب المادة والوضع
-  private getModelPriorityForSubject(
-    subject: string,
-    branch: AcademicBranch,
-    isExamMode: boolean = false
-  ): string[] {
-    // استخدام Smart Model Selector
-    const mode = isExamMode ? "exam" : "normal";
-    const smartModels = smartModelSelector.selectModels(subject, mode);
-    
-    // إذا Smart Selector رجع نماذج، استخدمها
-    if (smartModels && smartModels.length > 0) {
-      console.log(`🧠 Smart selection for ${subject} (${mode}):`, smartModels);
-      return smartModels;
-    }
-    
-    // Fallback: استخدام الطريقة القديمة حسب الفرع
-    return this.getModelPriorityForBranch(branch);
-  }
 
   private getModelPriorityForBranch(branch: AcademicBranch): string[] {
     if (branch === "scientific" || branch === "industrial") {
@@ -72,39 +46,13 @@ export class GeminiService {
   private currentContextPages: number[] = [];
   private bookTotalPages: number | null = null;
 
-  // 🔥 NEW: دالة اكتشاف المادة من اسم الكتاب
-  private detectSubjectFromBook(book: any): string {
-    if (!book || !book.file_name) return "other";
-    
-    const fileName = book.file_name.toLowerCase();
-    
-    if (/(رياضيات|mathematics|math)/i.test(fileName)) return "رياضيات";
-    if (/(فيزياء|physics)/i.test(fileName)) return "فيزياء";
-    if (/(كيمياء|chemistry)/i.test(fileName)) return "كيمياء";
-    if (/(أحياء|احياء|biology)/i.test(fileName)) return "أحياء";
-    if (/(عربي|أدب|ادب)/i.test(fileName)) return "عربي";
-    if (/(إنجليزي|انجليزي|english)/i.test(fileName)) return "انجليزي";
-    
-    return "other";
-  }
-
   // 🎓 دالة الكشف عن المادة واختيار البرومت المناسب
-  private getSpecializedPrompt(book: any, isExamMode: boolean = false): string {
-    if (!book || !book.file_name) {
-      return isExamMode ? getUrgentPrompt("other") : defaultPrompt;
-    }
+  private getSpecializedPrompt(book: any): string {
+    if (!book || !book.file_name) return defaultPrompt;
     
     const fileName = book.file_name.toLowerCase();
     
-    // 🔥 NEW: إذا كان وضع الامتحان مفعّل، استخدم البرومبت السريع
-    if (true) {
-      const subject = this.detectSubjectFromBook(book);
-      const urgentPrompt = getUrgentPrompt(subject);
-      console.log(`⚡ Using URGENT prompt for ${subject}`);
-      return urgentPrompt;
-    }
-    
-    // الوضع العادي - البرومبتات المتخصصة الأصلية
+    // المواد الأساسية الخمس
     if (/(عربي|أدب|ادب|قراءة|نصوص)/i.test(fileName)) {
       return arabicPrompt;
     }
@@ -127,6 +75,8 @@ export class GeminiService {
       return defaultPrompt;
     }
     
+    // الحالات الأخرى - استخدم البرومت الافتراضي حالياً
+    // (سيتم إضافة مواد أخرى لاحقاً)
     return defaultPrompt;
   }
 
@@ -135,16 +85,19 @@ export class GeminiService {
     try {
       console.log(`🔍 Vector search for: "${query}"`);
       
+      // 🔥 التحقق من صحة البيانات الأساسية
       if (!book || !book.id || book.file_name === "البحث عبر الإنترنت") {
         console.warn('⚠️ Invalid book data or web search only mode, returning empty context');
         return "CONTEXT_NOT_FOUND";
       }
 
+      // 🔥 إضافة timeout للـ vector search (10 ثواني)
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('Vector search timeout after 10 seconds')), 10000);
       });
 
       const searchPromise = (async () => {
+        // 1. توليد embedding للسؤال مع timeout فرعي (5 ثواني)
         const embeddingPromise = generateQueryEmbedding(query);
         const embeddingTimeout = new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error('Embedding generation timeout')), 5000);
@@ -152,10 +105,11 @@ export class GeminiService {
         
         const queryEmbedding = await Promise.race([embeddingPromise, embeddingTimeout]);
 
+        // 2. البحث باستخدام vector similarity
         const { data: pages, error } = await supabaseAdmin.rpc('match_book_pages', {
           query_embedding: queryEmbedding,
           book_id_filter: book.id,
-          match_threshold: 0.4,
+          match_threshold: 0.4, // قلل لـ 0.3 لو مش بيلاقي نتائج
           match_count: limit
         });
 
@@ -169,10 +123,12 @@ export class GeminiService {
           throw new Error('No pages found');
         }
 
+        // 3. حفظ النتائج
         this.currentContextPages = pages.map((p: any) => p.page_number);
         this.primaryPageNumber = this.currentContextPages[0] || null;
         this.bookTotalPages = book.total_pages || Math.max(...this.currentContextPages);
 
+        // 4. عرض النتائج للـ debugging
         console.log('\n📊 Vector Search Results:');
         pages.slice(0, 10).forEach((page: any, idx: number) => {
           const similarity = ((page.similarity || 0) * 100).toFixed(1);
@@ -180,6 +136,7 @@ export class GeminiService {
         });
         console.log(`📄 Selected pages: [${this.currentContextPages.join(', ')}]\n`);
 
+        // 5. تنسيق السياق
         const availablePages = this.currentContextPages.join(", ");
         const contextText = pages
           .map((page: any) => page.content)
@@ -191,16 +148,18 @@ export class GeminiService {
 ${contextText}`;
       })();
 
+      // Race بين البحث والـ timeout
       return await Promise.race([searchPromise, timeoutPromise]);
 
     } catch (err: any) {
       console.error('❌ Vector search failed:', err?.message || err);
+      // Fallback: استخدم keyword search (أسرع)
       console.warn('⚠️ Falling back to keyword search...');
       return this.getRelevantContextKeyword(query, book, limit);
     }
   }
 
-  // 🔧 Fallback: Keyword Search
+  // 🔧 Fallback: Keyword Search (نفس الكود القديم)
   private getRelevantContextKeyword(query: string, book: any, limit = 15): string {
     let pages = book?.book_pages || [];
     if (pages.length === 0) return "CONTEXT_NOT_FOUND";
@@ -320,29 +279,20 @@ ${contextText}`;
 ${contextText}`;
   }
 
-  // 🔥 NEW: دالة askQuestion محدثة مع دعم Exam Mode
-  async askQuestion(
-    prompt: string, 
-    book: any, 
-    history: Message[], 
-    useInternet: boolean, 
-    branch: AcademicBranch, 
-    imageB64?: string,
-    isExamMode: boolean = false  // ← NEW parameter
-  ) {
+  async askQuestion(prompt: string, book: any, history: Message[], useInternet: boolean, branch: AcademicBranch, imageB64?: string) {
     console.log('🚀 Starting askQuestion...');
     console.log(`📝 Prompt: "${prompt.substring(0, 50)}..."`);
     console.log(`📚 Book: ${book?.file_name || 'Unknown'}`);
     console.log(`🌐 Web Search Enabled: ${useInternet}`);
-    console.log(`⚡ Exam Mode: ${isExamMode}`);  // ← NEW log
     
+    // 🔥 إذا كان البحث عبر الإنترنت مفعل وليس هناك كتاب صحيح، نتخطى vector search
     const shouldSkipBookSearch = useInternet && (!book || !book.id || book.file_name === "البحث عبر الإنترنت");
     
     const contextStartTime = Date.now();
     let context = "CONTEXT_NOT_FOUND";
     
     if (!shouldSkipBookSearch) {
-      context = await this.getRelevantContext(prompt, book);
+      context = await this.getRelevantContext(prompt, book); // ✅ أضفنا await
     } else {
       console.log('🌐 Skipping book search - using web search only');
     }
@@ -350,7 +300,7 @@ ${contextText}`;
     const contextDuration = Date.now() - contextStartTime;
     console.log(`⏱️ Context retrieval took ${contextDuration}ms`);
 
-    // بناء السياق
+    // 🔥 بناء السياق حسب نوع البحث
     let contextSection = '';
     if (useInternet && shouldSkipBookSearch) {
       contextSection = `
@@ -372,20 +322,19 @@ ${context !== "CONTEXT_NOT_FOUND" ? context : "لا يوجد سياق متاح"}
 ${context !== "CONTEXT_NOT_FOUND" ? context : "⚠️ لم يتم العثور على معلومات ذات صلة في الكتاب."}`;
     }
 
-    // 🔥 NEW: اختيار البرومبت حسب الوضع
-    const specializedPromptTemplate = this.getSpecializedPrompt(book, isExamMode);
+    // 🔥 الحصول على البرومت المتخصص حسب المادة
+    const specializedPromptTemplate = this.getSpecializedPrompt(book);
     const systemPrompt = specializedPromptTemplate.replace('${context}', contextSection);
 
-    // 🔥 NEW: اختيار النماذج حسب المادة والوضع
-    const subject = this.detectSubjectFromBook(book);
-    const modelPriority = this.getModelPriorityForSubject(subject, branch, isExamMode);
-
     let lastError;
+
+    const modelPriority = this.getModelPriorityForBranch(branch);
 
     for (const modelId of modelPriority) {
       try {
         console.log(`🤖 Trying model: ${modelId}`);
         
+        // 🔥 إضافة timeout للـ API call (60 ثانية)
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 60000);
 
@@ -433,12 +382,16 @@ ${context !== "CONTEXT_NOT_FOUND" ? context : "⚠️ لم يتم العثور �
           let responseText = data.choices[0].message.content;
           console.log(`✅ Success with model: ${modelId}`);
 
-          // استخراج المصادر
+          // 🔥 استخراج المصادر من الرد إذا كان البحث عبر الإنترنت مفعل
           let sources: any[] = [];
           const metadataMatch = responseText.match(/\[METADATA:(.*?)\]/);
           
           if (useInternet && metadataMatch) {
+            // 🔥 استخراج المصادر من الإنترنت - صيغة محسّنة
+            // الصيغة المتوقعة: [METADATA:SOURCE:اسم,URL:رابط SOURCE:اسم2,URL:رابط2]
             const metadataContent = metadataMatch[1];
+            
+            // 🔥 regex محسن يستخرج SOURCE:URL pairs (يدعم مسافات وأحرف عربية)
             const sourceRegex = /SOURCE:([^,]+?),\s*URL:\s*([^\s\]]+)/gi;
             let sourceMatch;
             const foundSources = [];
@@ -447,12 +400,15 @@ ${context !== "CONTEXT_NOT_FOUND" ? context : "⚠️ لم يتم العثور �
               const title = sourceMatch[1].trim();
               let url = sourceMatch[2].trim();
               
+              // إزالة أي مسافات في نهاية URL
               url = url.replace(/\s+$/, '');
               
+              // إضافة https:// إذا لم يكن موجوداً
               if (url && !url.startsWith('http')) {
                 url = `https://${url}`;
               }
               
+              // تخطي إذا كان URL = "كتاب" أو "book" (هذا مصدر الكتاب، سيضاف لاحقاً)
               if (url && url !== "كتاب" && url !== "book" && (url.startsWith('http') || url.includes('.'))) {
                 foundSources.push({
                   title: title || "مصدر غير محدد",
@@ -465,13 +421,16 @@ ${context !== "CONTEXT_NOT_FOUND" ? context : "⚠️ لم يتم العثور �
               }
             }
             
+            // إضافة المصادر إذا وُجدت
             if (foundSources.length > 0) {
               sources.push(...foundSources);
             }
             
+            // تنظيف النص من metadata
             responseText = responseText.replace(/\[METADATA:.*?\]/g, "").trim();
           }
           
+          // إضافة مصدر الكتاب إذا كان موجوداً
           if (book && book.id && book.file_name !== "البحث عبر الإنترنت") {
             sources.unshift({
               title: book.file_name,
@@ -482,6 +441,7 @@ ${context !== "CONTEXT_NOT_FOUND" ? context : "⚠️ لم يتم العثور �
             });
           }
           
+          // إذا لم يكن هناك مصادر، نضيف المصدر الافتراضي
           if (sources.length === 0) {
             sources = [{
               title: useInternet ? "البحث عبر الإنترنت" : (book?.file_name || "مصدر غير محدد"),
@@ -508,6 +468,7 @@ ${context !== "CONTEXT_NOT_FOUND" ? context : "⚠️ لم يتم العثور �
         lastError = err;
         const errorMessage = err?.message || String(err);
         
+        // إذا كان timeout أو abort، انتقل للموديل التالي
         if (err.name === 'AbortError' || errorMessage.includes('timeout')) {
           console.warn(`⏱️ Timeout for model ${modelId}, trying next...`);
           continue;
@@ -515,6 +476,7 @@ ${context !== "CONTEXT_NOT_FOUND" ? context : "⚠️ لم يتم العثور �
         
         console.error(`❌ Model ${modelId} failed:`, errorMessage);
         
+        // إذا لم يكن rate limit، جرب الموديل التالي
         if (!errorMessage.includes('429') && !errorMessage.includes('402')) {
           continue;
         }
