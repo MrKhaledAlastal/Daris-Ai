@@ -1,3 +1,4 @@
+//components/MessageBlocks.tsx
 "use client";
 
 import React from "react";
@@ -1068,6 +1069,542 @@ export function CardsContainer({
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+// ============================================================
+// 9. GrammarCard - كرت القواعد (للإنجليزي)
+// ============================================================
+export function GrammarCard({
+  children,
+  tense,
+  structure,
+  examples,
+  note,
+}: {
+  children?: React.ReactNode;
+  tense?: string;
+  structure?: string;
+  examples?: string[];
+  note?: string;
+}) {
+  const content = String(children || "");
+  const [isOpen, setIsOpen] = React.useState(true);
+
+  // Parse content if props not provided
+  let parsedTense = tense || "";
+  let parsedStructure = structure || "";
+  let parsedExamples: string[] = examples || [];
+  let parsedNote = note || "";
+
+  if (!tense && content) {
+    const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+    lines.forEach(line => {
+      if (line.toLowerCase().startsWith("tense:") || line.startsWith("الزمن:")) {
+        parsedTense = line.split(":").slice(1).join(":").trim();
+      } else if (line.toLowerCase().startsWith("structure:") || line.startsWith("التركيب:")) {
+        parsedStructure = line.split(":").slice(1).join(":").trim();
+      } else if (line.toLowerCase().startsWith("examples:") || line.startsWith("أمثلة:")) {
+        parsedExamples = line.split(":").slice(1).join(":").split(/[؛;]/).map(e => e.trim()).filter(Boolean);
+      } else if (line.toLowerCase().startsWith("note:") || line.startsWith("ملاحظة:")) {
+        parsedNote = line.split(":").slice(1).join(":").trim();
+      }
+    });
+  }
+
+  return (
+    <div
+      className="h-full bg-gradient-to-br from-indigo-950/20 via-card to-card border-2 border-indigo-500/30 rounded-2xl overflow-hidden hover:border-indigo-500/50 hover:shadow-[0_0_40px_hsl(230,70%,50%/0.2)] transition-all duration-500 shadow-lg"
+      dir="ltr"
+    >
+      {/* Header */}
+      <div className="px-6 py-4 border-b border-indigo-500/20 flex items-center justify-between bg-gradient-to-r from-indigo-500/15 to-transparent">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-indigo-500/20">
+            <BookOpen className="w-5 h-5 text-indigo-400" />
+          </div>
+          <div>
+            <h3 className="text-foreground font-bold text-base">Grammar Rule</h3>
+            {parsedTense && (
+              <span className="text-indigo-300 text-xs">{parsedTense}</span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={() => setIsOpen(prev => !prev)}
+          className="p-1.5 rounded-lg bg-black/5 hover:bg-black/10 transition-colors"
+        >
+          <ChevronDown className={`w-4 h-4 text-foreground/60 transition-transform duration-200 ${!isOpen ? "-rotate-90" : ""}`} />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="p-6 space-y-5">
+          {/* Structure Box */}
+          {parsedStructure && (
+            <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4">
+              <div className="text-xs text-indigo-300 font-bold mb-2 uppercase tracking-wider">Structure</div>
+              <div className="text-xl font-mono text-white font-semibold tracking-wide">
+                {parsedStructure}
+              </div>
+            </div>
+          )}
+
+          {/* Examples */}
+          {parsedExamples.length > 0 && (
+            <div>
+              <div className="text-xs text-indigo-300 font-bold mb-3 uppercase tracking-wider">Examples</div>
+              <div className="space-y-2">
+                {parsedExamples.map((ex, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-3 bg-white/5 rounded-lg px-4 py-2.5 border border-white/10"
+                  >
+                    <span className="text-indigo-400 font-bold text-sm">{idx + 1}</span>
+                    <span className="text-foreground/90">{ex}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Note */}
+          {parsedNote && (
+            <div className="flex items-start gap-2 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+              <span className="text-yellow-400">⚠️</span>
+              <span className="text-yellow-200 text-sm">{parsedNote}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// 10. VocabCard - كرت المفردات (للإنجليزي)
+// ============================================================
+export function VocabCard({
+  children,
+  title,
+  words,
+}: {
+  children?: React.ReactNode;
+  title?: string;
+  words?: { word: string; meaning: string; example?: string }[];
+}) {
+  const content = String(children || "");
+  const [isOpen, setIsOpen] = React.useState(true);
+
+  let parsedTitle = title || "Vocabulary";
+  let parsedWords: { word: string; meaning: string; example?: string }[] = words || [];
+
+  if (!words && content) {
+    // Format: word | meaning | example; word2 | meaning2 | example2
+    const items = content.split(/[؛;]/).map(i => i.trim()).filter(Boolean);
+    parsedWords = items.map(item => {
+      const parts = item.split("|").map(p => p.trim());
+      return {
+        word: parts[0] || "",
+        meaning: parts[1] || "",
+        example: parts[2] || undefined,
+      };
+    });
+  }
+
+  return (
+    <div
+      className="h-full bg-gradient-to-br from-teal-950/20 via-card to-card border-2 border-teal-500/30 rounded-2xl overflow-hidden hover:border-teal-500/50 hover:shadow-[0_0_40px_hsl(170,70%,50%/0.2)] transition-all duration-500 shadow-lg"
+      dir="ltr"
+    >
+      <div className="px-6 py-4 border-b border-teal-500/20 flex items-center justify-between bg-gradient-to-r from-teal-500/15 to-transparent">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-teal-500/20">
+            <List className="w-5 h-5 text-teal-400" />
+          </div>
+          <h3 className="text-foreground font-bold text-base">{parsedTitle}</h3>
+        </div>
+        <button
+          onClick={() => setIsOpen(prev => !prev)}
+          className="p-1.5 rounded-lg bg-black/5 hover:bg-black/10 transition-colors"
+        >
+          <ChevronDown className={`w-4 h-4 text-foreground/60 transition-transform duration-200 ${!isOpen ? "-rotate-90" : ""}`} />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="p-4">
+          <div className="divide-y divide-white/10">
+            {parsedWords.map((item, idx) => (
+              <div key={idx} className="py-3 flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-lg font-bold text-teal-300">{item.word}</span>
+                  <span className="text-foreground/80 text-sm" dir="rtl">{item.meaning}</span>
+                </div>
+                {item.example && (
+                  <div className="text-xs text-foreground/60 italic bg-white/5 rounded px-2 py-1 mt-1">
+                    "{item.example}"
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// 11. ReactionCard - كرت التفاعل الكيميائي
+// ============================================================
+export function ReactionCard({
+  children,
+  equation,
+  reactants,
+  products,
+  type,
+  conditions,
+}: {
+  children?: React.ReactNode;
+  equation?: string;
+  reactants?: string;
+  products?: string;
+  type?: string;
+  conditions?: string;
+}) {
+  const content = String(children || "");
+  const [isOpen, setIsOpen] = React.useState(true);
+
+  let parsedEquation = equation || "";
+  let parsedReactants = reactants || "";
+  let parsedProducts = products || "";
+  let parsedType = type || "";
+  let parsedConditions = conditions || "";
+
+  if (!equation && content) {
+    const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+    lines.forEach(line => {
+      if (line.includes("→") || line.includes("->")) {
+        parsedEquation = line;
+      } else if (line.startsWith("المتفاعلات:") || line.toLowerCase().startsWith("reactants:")) {
+        parsedReactants = line.split(":").slice(1).join(":").trim();
+      } else if (line.startsWith("النواتج:") || line.toLowerCase().startsWith("products:")) {
+        parsedProducts = line.split(":").slice(1).join(":").trim();
+      } else if (line.startsWith("النوع:") || line.toLowerCase().startsWith("type:")) {
+        parsedType = line.split(":").slice(1).join(":").trim();
+      } else if (line.startsWith("الشروط:") || line.toLowerCase().startsWith("conditions:")) {
+        parsedConditions = line.split(":").slice(1).join(":").trim();
+      }
+    });
+  }
+
+  return (
+    <div
+      className="h-full bg-gradient-to-br from-rose-950/20 via-card to-card border-2 border-rose-500/30 rounded-2xl overflow-hidden hover:border-rose-500/50 hover:shadow-[0_0_40px_hsl(350,70%,50%/0.2)] transition-all duration-500 shadow-lg"
+      dir="rtl"
+    >
+      <div className="px-6 py-4 border-b border-rose-500/20 flex items-center justify-between bg-gradient-to-r from-rose-500/15 to-transparent">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-rose-500/20">
+            <Sparkles className="w-5 h-5 text-rose-400" />
+          </div>
+          <div>
+            <h3 className="text-foreground font-bold text-base">⚗️ تفاعل كيميائي</h3>
+            {parsedType && <span className="text-rose-300 text-xs">{parsedType}</span>}
+          </div>
+        </div>
+        <button
+          onClick={() => setIsOpen(prev => !prev)}
+          className="p-1.5 rounded-lg bg-black/5 hover:bg-black/10 transition-colors"
+        >
+          <ChevronDown className={`w-4 h-4 text-foreground/60 transition-transform duration-200 ${!isOpen ? "-rotate-90" : ""}`} />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="p-6 space-y-5">
+          {/* Main Equation */}
+          {parsedEquation && (
+            <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-6 text-center">
+              <div className="text-2xl md:text-3xl font-mono text-white font-bold tracking-wider" dir="ltr">
+                {parsedEquation.replace("->", "→")}
+              </div>
+            </div>
+          )}
+
+          {/* Reactants & Products */}
+          <div className="grid grid-cols-2 gap-4">
+            {parsedReactants && (
+              <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+                <div className="text-xs text-blue-300 font-bold mb-1">المتفاعلات</div>
+                <div className="text-foreground/90 text-sm">{parsedReactants}</div>
+              </div>
+            )}
+            {parsedProducts && (
+              <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                <div className="text-xs text-green-300 font-bold mb-1">النواتج</div>
+                <div className="text-foreground/90 text-sm">{parsedProducts}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Conditions */}
+          {parsedConditions && (
+            <div className="flex items-center gap-2 text-sm text-foreground/70">
+              <span className="text-rose-300">⚡ الشروط:</span>
+              <span>{parsedConditions}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// 12. DiagramCard - كرت المخطط/التصنيف (للأحياء)
+// ============================================================
+export function DiagramCard({
+  children,
+  title,
+  items,
+}: {
+  children?: React.ReactNode;
+  title?: string;
+  items?: { name: string; description?: string; children?: string[] }[];
+}) {
+  const content = String(children || "");
+  const [isOpen, setIsOpen] = React.useState(true);
+
+  let parsedTitle = title || "مخطط تصنيفي";
+  let parsedItems: { name: string; description?: string }[] = [];
+
+  if (!items && content) {
+    // Parse tree-like structure
+    const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+    lines.forEach(line => {
+      const cleaned = line.replace(/^[├└│─\s]+/, "").trim();
+      if (cleaned) {
+        const parts = cleaned.split(/[()（）]/).map(p => p.trim()).filter(Boolean);
+        parsedItems.push({
+          name: parts[0] || cleaned,
+          description: parts[1] || undefined,
+        });
+      }
+    });
+  }
+
+  return (
+    <div
+      className="h-full bg-gradient-to-br from-lime-950/20 via-card to-card border-2 border-lime-500/30 rounded-2xl overflow-hidden hover:border-lime-500/50 hover:shadow-[0_0_40px_hsl(80,70%,50%/0.2)] transition-all duration-500 shadow-lg"
+      dir="rtl"
+    >
+      <div className="px-6 py-4 border-b border-lime-500/20 flex items-center justify-between bg-gradient-to-r from-lime-500/15 to-transparent">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-lime-500/20">
+            <Hash className="w-5 h-5 text-lime-400" />
+          </div>
+          <h3 className="text-foreground font-bold text-base">🌿 {parsedTitle}</h3>
+        </div>
+        <button
+          onClick={() => setIsOpen(prev => !prev)}
+          className="p-1.5 rounded-lg bg-black/5 hover:bg-black/10 transition-colors"
+        >
+          <ChevronDown className={`w-4 h-4 text-foreground/60 transition-transform duration-200 ${!isOpen ? "-rotate-90" : ""}`} />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="p-6">
+          <div className="space-y-2">
+            {parsedItems.map((item, idx) => (
+              <div
+                key={idx}
+                className="flex items-center gap-3 bg-lime-500/10 border border-lime-500/20 rounded-lg p-3"
+              >
+                <div className="w-8 h-8 rounded-full bg-lime-500/20 flex items-center justify-center text-lime-300 font-bold text-sm">
+                  {idx + 1}
+                </div>
+                <div className="flex-1">
+                  <div className="font-semibold text-foreground">{item.name}</div>
+                  {item.description && (
+                    <div className="text-xs text-foreground/60 mt-0.5">{item.description}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {children && !items && parsedItems.length === 0 && (
+            <pre className="text-sm text-foreground/80 font-mono whitespace-pre-wrap">{content}</pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// 13. CycleCard - كرت الدورة الحيوية (للأحياء)
+// ============================================================
+export function CycleCard({
+  children,
+  title,
+  steps,
+}: {
+  children?: React.ReactNode;
+  title?: string;
+  steps?: string[];
+}) {
+  const content = String(children || "");
+  const [isOpen, setIsOpen] = React.useState(true);
+
+  let parsedTitle = title || "دورة حيوية";
+  let parsedSteps: string[] = steps || [];
+
+  if (!steps && content) {
+    // Parse: step1 → step2 → step3
+    parsedSteps = content.split(/[→⟶\->]/).map(s => s.trim()).filter(Boolean);
+  }
+
+  return (
+    <div
+      className="h-full bg-gradient-to-br from-cyan-950/20 via-card to-card border-2 border-cyan-500/30 rounded-2xl overflow-hidden hover:border-cyan-500/50 hover:shadow-[0_0_40px_hsl(190,70%,50%/0.2)] transition-all duration-500 shadow-lg"
+      dir="rtl"
+    >
+      <div className="px-6 py-4 border-b border-cyan-500/20 flex items-center justify-between bg-gradient-to-r from-cyan-500/15 to-transparent">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-cyan-500/20">
+            <PlayCircle className="w-5 h-5 text-cyan-400" />
+          </div>
+          <h3 className="text-foreground font-bold text-base">🔄 {parsedTitle}</h3>
+        </div>
+        <button
+          onClick={() => setIsOpen(prev => !prev)}
+          className="p-1.5 rounded-lg bg-black/5 hover:bg-black/10 transition-colors"
+        >
+          <ChevronDown className={`w-4 h-4 text-foreground/60 transition-transform duration-200 ${!isOpen ? "-rotate-90" : ""}`} />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="p-6">
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {parsedSteps.map((step, idx) => (
+              <React.Fragment key={idx}>
+                <div className="bg-cyan-500/20 border border-cyan-500/30 rounded-xl px-4 py-3 text-center min-w-[100px]">
+                  <div className="text-xs text-cyan-300 mb-1">خطوة {idx + 1}</div>
+                  <div className="text-foreground font-semibold text-sm">{step}</div>
+                </div>
+                {idx < parsedSteps.length - 1 && (
+                  <div className="text-cyan-400 text-2xl">→</div>
+                )}
+              </React.Fragment>
+            ))}
+            {parsedSteps.length > 2 && (
+              <div className="w-full text-center text-cyan-400 text-2xl mt-2">↺</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// 14. ParseCard - كرت الإعراب (للعربي)
+// ============================================================
+export function ParseCard({
+  children,
+  word,
+  type,
+  case: grammaticalCase,
+  reason,
+}: {
+  children?: React.ReactNode;
+  word?: string;
+  type?: string;
+  case?: string;
+  reason?: string;
+}) {
+  const content = String(children || "");
+  const [isOpen, setIsOpen] = React.useState(true);
+
+  let parsedWord = word || "";
+  let parsedType = type || "";
+  let parsedCase = grammaticalCase || "";
+  let parsedReason = reason || "";
+
+  if (!word && content) {
+    const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+    lines.forEach(line => {
+      if (line.startsWith("الكلمة:")) {
+        parsedWord = line.split(":").slice(1).join(":").trim();
+      } else if (line.startsWith("النوع:")) {
+        parsedType = line.split(":").slice(1).join(":").trim();
+      } else if (line.startsWith("الإعراب:") || line.startsWith("العلامة:")) {
+        parsedCase = line.split(":").slice(1).join(":").trim();
+      } else if (line.startsWith("السبب:")) {
+        parsedReason = line.split(":").slice(1).join(":").trim();
+      }
+    });
+  }
+
+  return (
+    <div
+      className="h-full bg-gradient-to-br from-orange-950/20 via-card to-card border-2 border-orange-500/30 rounded-2xl overflow-hidden hover:border-orange-500/50 hover:shadow-[0_0_40px_hsl(30,70%,50%/0.2)] transition-all duration-500 shadow-lg"
+      dir="rtl"
+    >
+      <div className="px-6 py-4 border-b border-orange-500/20 flex items-center justify-between bg-gradient-to-r from-orange-500/15 to-transparent">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-orange-500/20">
+            <Edit className="w-5 h-5 text-orange-400" />
+          </div>
+          <h3 className="text-foreground font-bold text-base">✏️ الإعراب</h3>
+        </div>
+        <button
+          onClick={() => setIsOpen(prev => !prev)}
+          className="p-1.5 rounded-lg bg-black/5 hover:bg-black/10 transition-colors"
+        >
+          <ChevronDown className={`w-4 h-4 text-foreground/60 transition-transform duration-200 ${!isOpen ? "-rotate-90" : ""}`} />
+        </button>
+      </div>
+
+      {isOpen && (
+        <div className="p-6 space-y-4">
+          {/* الكلمة */}
+          {parsedWord && (
+            <div className="text-center py-4 bg-orange-500/10 rounded-xl border border-orange-500/20">
+              <div className="text-3xl font-bold text-orange-300 font-serif">
+                {parsedWord}
+              </div>
+            </div>
+          )}
+
+          {/* التفاصيل */}
+          <div className="grid grid-cols-1 gap-3">
+            {parsedType && (
+              <div className="flex justify-between items-center bg-white/5 rounded-lg px-4 py-2">
+                <span className="text-foreground/60 text-sm">النوع:</span>
+                <span className="text-foreground font-semibold">{parsedType}</span>
+              </div>
+            )}
+            {parsedCase && (
+              <div className="flex justify-between items-center bg-white/5 rounded-lg px-4 py-2">
+                <span className="text-foreground/60 text-sm">العلامة الإعرابية:</span>
+                <span className="text-orange-300 font-semibold">{parsedCase}</span>
+              </div>
+            )}
+            {parsedReason && (
+              <div className="flex justify-between items-center bg-white/5 rounded-lg px-4 py-2">
+                <span className="text-foreground/60 text-sm">السبب:</span>
+                <span className="text-foreground/80 text-sm">{parsedReason}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

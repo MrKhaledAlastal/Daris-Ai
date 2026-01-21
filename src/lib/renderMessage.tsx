@@ -1,12 +1,26 @@
+//lib/renderMessage.tsx
 "use client";
 
 import React from "react";
+import {
+  StepCard,
+  VisualCard,
+  WarningCard,
+  TipCard,
+  ImprovedBox,
+} from "@/components/NewMessageBlocks";
 import {
   ConceptCard,
   ListCard,
   QuoteCard,
   ExampleCard,
   Box as FormulaCard,
+  GrammarCard,
+  VocabCard,
+  ReactionCard,
+  DiagramCard,
+  CycleCard,
+  ParseCard,
 } from "@/components/MessageBlocks";
 import { LatexRenderer } from "@/lib/latex-renderer";
 import { parseFormulaContent } from "@/lib/formula-utils";
@@ -127,7 +141,7 @@ export function renderMessage(text: string) {
     .replace(/\*\*/g, "");
 
   const parts = cleanText.split(
-    /(\[concept\][\s\S]*?(?:\[\/concept\]|$)|\[card\][\s\S]*?(?:\[\/card\]|$)|\[box\][\s\S]*?(?:\[\/box\]|$)|\[list\][\s\S]*?(?:\[\/list\]|$)|\[quote\][\s\S]*?(?:\[\/quote\]|$)|\[example\][\s\S]*?(?:\[\/example\]|$)|\[analysis\][\s\S]*?(?:\[\/analysis\]|$)|\[poetry\][\s\S]*?(?:\[\/poetry\]|$)|\[process\][\s\S]*?(?:\[\/process\]|$)|\[METADATA:[\s\S]*?\])/i
+    /(\[concept\][\s\S]*?(?:\[\/concept\]|$)|\[box\][\s\S]*?(?:\[\/box\]|$)|\[step\][\s\S]*?(?:\[\/step\]|$)|\[visual\][\s\S]*?(?:\[\/visual\]|$)|\[warning\][\s\S]*?(?:\[\/warning\]|$)|\[tip\][\s\S]*?(?:\[\/tip\]|$)|\[list\][\s\S]*?(?:\[\/list\]|$)|\[example\][\s\S]*?(?:\[\/example\]|$)|\[grammar\][\s\S]*?(?:\[\/grammar\]|$)|\[vocab\][\s\S]*?(?:\[\/vocab\]|$)|\[reaction\][\s\S]*?(?:\[\/reaction\]|$)|\[diagram\][\s\S]*?(?:\[\/diagram\]|$)|\[cycle\][\s\S]*?(?:\[\/cycle\]|$)|\[parse\][\s\S]*?(?:\[\/parse\]|$)|\[إعراب\][\s\S]*?(?:\[\/إعراب\]|$))/i
   );
 
   const messageIsArabic = isArabic(cleanText);
@@ -215,6 +229,7 @@ export function renderMessage(text: string) {
 
     const lower = part.toLowerCase();
 
+    // [concept]
     if (lower.startsWith("[concept]")) {
       let content = part.replace(/\[\/?concept\]/gi, "").trim();
       const colonIdx = content.indexOf(":");
@@ -234,48 +249,109 @@ export function renderMessage(text: string) {
       return;
     }
 
-    // renderMessage.tsx - جزء معالجة [box] المحسّن
+    // ============================================================
+    // البطاقات الجديدة المحسّنة ⚡
+    // ============================================================
 
-    // استبدل هذا الجزء في renderMessage.tsx:
-
+    // [box] - القانون المحسّن
     if (lower.startsWith("[box]")) {
       let content = part.replace(/\[\/?box\]/gi, "").trim();
-      let isExampleBox = false;
-
-      // تحقق من كلمة "مثال" في البداية
-      content = content.replace(/^\s*مثال\s*[:\-]?\s*/i, () => {
-        isExampleBox = true;
-        return "";
-      });
-
-      // 🔥 الحل: لا تستخرج title من المحتوى!
-      // المعادلة يجب أن تبدأ مباشرة بدون عنوان
-
-      // إذا كان هناك ":" قبل أول "|" فهذا خطأ - تجاهله
-      const firstPipe = content.indexOf("|");
-      if (firstPipe > 0) {
-        const beforePipe = content.substring(0, firstPipe);
-        // إذا كان هناك ":" في الجزء قبل أول "|" وليس جزء من المعادلة
-        const colonIdx = beforePipe.indexOf(":");
-        if (colonIdx > 0 && !beforePipe.includes("=")) {
-          // هذا عنوان خاطئ - احذفه
-          content = content.substring(colonIdx + 1).trim();
-        }
-      }
-
       orderedBlocks.push(
-        <FormulaCard
-          key={`box-formula-${i}`}
-          title={undefined} // لا نستخدم title من المحتوى
-          isExample={isExampleBox}
-        >
+        <ImprovedBox key={`box-${i}`}>
           {content}
-        </FormulaCard>
+        </ImprovedBox>
       );
       return;
     }
 
+    // [step] - خطوة الحل
+    if (lower.startsWith("[step]")) {
+      let content = part.replace(/\[\/?step\]/gi, "").trim();
+      const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+      let stepNum = 0, explanation = "", calculation = "";
+      
+      lines.forEach(line => {
+        if (line.startsWith("رقم:") || line.toLowerCase().startsWith("number:")) {
+          stepNum = parseInt(line.split(":")[1]?.trim() || "0") || 0;
+        } else if (line.startsWith("شرح:") || line.toLowerCase().startsWith("explanation:")) {
+          explanation = line.split(":").slice(1).join(":").trim();
+        } else if (line.startsWith("حساب:") || line.toLowerCase().startsWith("calculation:")) {
+          calculation = line.split(":").slice(1).join(":").trim();
+        }
+      });
+      
+      orderedBlocks.push(
+        <StepCard
+          key={`step-${i}`}
+          stepNumber={stepNum}
+          explanation={explanation}
+          calculation={calculation}
+        />
+      );
+      return;
+    }
 
+    // [visual] - الرسم التوضيحي
+    if (lower.startsWith("[visual]")) {
+      let content = part.replace(/\[\/?visual\]/gi, "").trim();
+      const lines = content.split("\n").map(l => l.trim()).filter(Boolean);
+      let type: "circle" | "triangle" | "rectangle" | "graph" = "circle";
+      let elements: string[] = [];
+      let description = "";
+      
+      lines.forEach(line => {
+        if (line.startsWith("نوع:") || line.toLowerCase().startsWith("type:")) {
+          const t = line.split(":")[1]?.trim().toLowerCase();
+          if (t === "circle" || t === "دائرة") type = "circle";
+          else if (t === "triangle" || t === "مثلث") type = "triangle";
+          else if (t === "rectangle" || t === "مستطيل") type = "rectangle";
+        }
+        else if (line.startsWith("عناصر:") || line.toLowerCase().startsWith("elements:")) {
+          elements = line.split(":").slice(1).join(":").split(/[؛;]/).map(e => e.trim()).filter(Boolean);
+        }
+        else if (line.startsWith("وصف:") || line.toLowerCase().startsWith("description:")) {
+          description = line.split(":").slice(1).join(":").trim();
+        }
+      });
+      
+      orderedBlocks.push(
+        <VisualCard
+          key={`visual-${i}`}
+          type={type}
+          elements={elements}
+          description={description}
+        />
+      );
+      return;
+    }
+
+    // [warning] - التحذير
+    if (lower.startsWith("[warning]")) {
+      let content = part.replace(/\[\/?warning\]/gi, "").trim().replace(/^⚠️\s*/, "");
+      orderedBlocks.push(
+        <WarningCard key={`warning-${i}`}>
+          {content}
+        </WarningCard>
+      );
+      return;
+    }
+
+    // [tip] - النصيحة
+    if (lower.startsWith("[tip]")) {
+      let content = part.replace(/\[\/?tip\]/gi, "").trim().replace(/^💡\s*/, "");
+      orderedBlocks.push(
+        <TipCard key={`tip-${i}`}>
+          {content}
+        </TipCard>
+      );
+      return;
+    }
+
+    // ============================================================
+    // البطاقات القديمة (محفوظة)
+    // ============================================================
+
+    // [list]
     if (lower.startsWith("[list]")) {
       let content = part.replace(/\[\/?list\]/gi, "").trim();
       const colonIdx = content.indexOf(":");
@@ -296,14 +372,15 @@ export function renderMessage(text: string) {
       return;
     }
 
+    // [quote]
     if (lower.startsWith("[quote]")) {
       let content = part.replace(/\[\/?quote\]/gi, "").trim();
-      let source: string | undefined;  // ⬅️ معرّف هنا
+      let source: string | undefined;
 
       if (content.includes("---")) {
         const quoteParts = content.split("---");
         content = quoteParts[0].trim();
-        source = quoteParts[1]?.trim();  // ⬅️ بياخد قيمة هنا
+        source = quoteParts[1]?.trim();
       }
 
       orderedBlocks.push(
@@ -314,9 +391,9 @@ export function renderMessage(text: string) {
       return;
     }
 
+    // [example]
     if (lower.startsWith("[example]")) {
       const content = part.replace(/\[\/?example\]/gi, "").trim();
-
       orderedBlocks.push(
         <ExampleCard key={`example-${i}`}>
           {content}
@@ -325,6 +402,70 @@ export function renderMessage(text: string) {
       return;
     }
 
+    // [grammar] - للإنجليزي
+    if (lower.startsWith("[grammar]")) {
+      const content = part.replace(/\[\/?grammar\]/gi, "").trim();
+      orderedBlocks.push(
+        <GrammarCard key={`grammar-${i}`}>{content}</GrammarCard>
+      );
+      return;
+    }
+
+    // [vocab] - للإنجليزي
+    if (lower.startsWith("[vocab]")) {
+      let content = part.replace(/\[\/?vocab\]/gi, "").trim();
+      const colonIdx = content.indexOf(":");
+      const title = colonIdx > 0 ? content.slice(0, colonIdx).trim() : undefined;
+      const body = colonIdx > 0 ? content.slice(colonIdx + 1).trim() : content;
+      orderedBlocks.push(
+        <VocabCard key={`vocab-${i}`} title={title}>{body}</VocabCard>
+      );
+      return;
+    }
+
+    // [reaction] - للكيمياء
+    if (lower.startsWith("[reaction]")) {
+      const content = part.replace(/\[\/?reaction\]/gi, "").trim();
+      orderedBlocks.push(
+        <ReactionCard key={`reaction-${i}`}>{content}</ReactionCard>
+      );
+      return;
+    }
+
+    // [diagram] - للأحياء
+    if (lower.startsWith("[diagram]")) {
+      let content = part.replace(/\[\/?diagram\]/gi, "").trim();
+      const colonIdx = content.indexOf(":");
+      const title = colonIdx > 0 ? content.slice(0, colonIdx).trim() : undefined;
+      const body = colonIdx > 0 ? content.slice(colonIdx + 1).trim() : content;
+      orderedBlocks.push(
+        <DiagramCard key={`diagram-${i}`} title={title}>{body}</DiagramCard>
+      );
+      return;
+    }
+
+    // [cycle] - للأحياء
+    if (lower.startsWith("[cycle]")) {
+      let content = part.replace(/\[\/?cycle\]/gi, "").trim();
+      const colonIdx = content.indexOf(":");
+      const title = colonIdx > 0 ? content.slice(0, colonIdx).trim() : undefined;
+      const body = colonIdx > 0 ? content.slice(colonIdx + 1).trim() : content;
+      orderedBlocks.push(
+        <CycleCard key={`cycle-${i}`} title={title}>{body}</CycleCard>
+      );
+      return;
+    }
+
+    // [parse] - للإعراب (العربي)
+    if (lower.startsWith("[parse]") || lower.startsWith("[إعراب]")) {
+      const content = part.replace(/\[\/?parse\]/gi, "").replace(/\[\/?إعراب\]/gi, "").trim();
+      orderedBlocks.push(
+        <ParseCard key={`parse-${i}`}>{content}</ParseCard>
+      );
+      return;
+    }
+
+    // [analysis]
     if (lower.startsWith("[analysis]")) {
       let content = part.replace(/\[\/?analysis\]/gi, "").trim();
       const colonIdx = content.indexOf(":");
@@ -342,6 +483,7 @@ export function renderMessage(text: string) {
       return;
     }
 
+    // [poetry]
     if (lower.startsWith("[poetry]")) {
       let content = part.replace(/\[\/?poetry\]/gi, "").trim();
       const block = buildTextBlock(content, i, "poetry");
@@ -351,6 +493,7 @@ export function renderMessage(text: string) {
       return;
     }
 
+    // [process]
     if (lower.startsWith("[process]")) {
       let content = part.replace(/\[\/?process\]/gi, "").trim();
       const colonIdx = content.indexOf(":");
@@ -368,6 +511,7 @@ export function renderMessage(text: string) {
       return;
     }
 
+    // [card]
     if (lower.startsWith("[card]")) {
       let content = part.replace(/\[\/?card\]/gi, "").trim();
       let isExampleCard = false;
@@ -391,16 +535,19 @@ export function renderMessage(text: string) {
       return;
     }
 
+    // METADATA
     if (part.startsWith("[METADATA")) {
       return;
     }
 
+    // Default text block
     const block = buildTextBlock(part, i, "text");
     if (block) {
       orderedBlocks.push(block);
     }
   });
 
+  // TOC
   if (toc.length >= 2) {
     orderedBlocks.unshift(
       <div

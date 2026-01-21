@@ -1,4 +1,4 @@
-import type {NextConfig} from 'next';
+import type { NextConfig } from 'next';
 import withPWA from 'next-pwa';
 
 const pwaConfig = withPWA({
@@ -9,7 +9,6 @@ const pwaConfig = withPWA({
 });
 
 const nextConfig: NextConfig = {
-  /* config options here */
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -21,22 +20,28 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: 'placehold.co',
-        port: '',
         pathname: '/**',
       },
       {
         protocol: 'https',
         hostname: 'images.unsplash.com',
-        port: '',
         pathname: '/**',
       },
       {
         protocol: 'https',
         hostname: 'picsum.photos',
-        port: '',
         pathname: '/**',
       },
     ],
+  },
+  experimental: {
+    serverActions: {
+      allowedOrigins: [
+        'localhost:9002',
+        'localhost:3000',
+        '*.app.github.dev',
+      ],
+    },
   },
 };
 
